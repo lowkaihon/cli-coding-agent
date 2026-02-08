@@ -1,0 +1,121 @@
+package ui
+
+import (
+	"fmt"
+	"os"
+	"strings"
+)
+
+// ANSI color codes
+const (
+	Reset   = "\033[0m"
+	Bold    = "\033[1m"
+	Dim     = "\033[2m"
+	Red     = "\033[31m"
+	Green   = "\033[32m"
+	Yellow  = "\033[33m"
+	Blue    = "\033[34m"
+	Magenta = "\033[35m"
+	Cyan    = "\033[36m"
+	Gray    = "\033[90m"
+	White   = "\033[97m"
+)
+
+// Terminal handles all user-facing output.
+type Terminal struct {
+	color bool
+}
+
+// NewTerminal creates a terminal with color detection.
+func NewTerminal() *Terminal {
+	return &Terminal{
+		color: isTerminal(),
+	}
+}
+
+func isTerminal() bool {
+	fi, err := os.Stdout.Stat()
+	if err != nil {
+		return false
+	}
+	return (fi.Mode() & os.ModeCharDevice) != 0
+}
+
+func (t *Terminal) c(code, text string) string {
+	if !t.color {
+		return text
+	}
+	return code + text + Reset
+}
+
+// PrintBanner prints the startup banner.
+func (t *Terminal) PrintBanner(model, workDir string) {
+	fmt.Println(t.c(Bold+Cyan, "pilot") + t.c(Gray, " — AI coding agent"))
+	fmt.Println(t.c(Gray, fmt.Sprintf("Model: %s | Dir: %s", model, workDir)))
+	fmt.Println(t.c(Gray, "Type 'exit' to quit."))
+	fmt.Println()
+}
+
+// PrintPrompt prints the input prompt.
+func (t *Terminal) PrintPrompt() {
+	fmt.Print(t.c(Bold+Blue, "> "))
+}
+
+// PrintAssistant prints assistant text.
+func (t *Terminal) PrintAssistant(text string) {
+	fmt.Print(text)
+}
+
+// PrintAssistantDone signals end of assistant output.
+func (t *Terminal) PrintAssistantDone() {
+	fmt.Println()
+	fmt.Println()
+}
+
+// PrintToolCall prints a tool invocation.
+func (t *Terminal) PrintToolCall(name string, args string) {
+	fmt.Println(t.c(Yellow, fmt.Sprintf("  ↳ %s", name)) + t.c(Gray, fmt.Sprintf(" %s", truncate(args, 100))))
+}
+
+// PrintToolResult prints a tool's result (truncated).
+func (t *Terminal) PrintToolResult(result string) {
+	lines := strings.Split(result, "\n")
+	if len(lines) > 5 {
+		for _, line := range lines[:5] {
+			fmt.Println(t.c(Gray, "    "+truncate(line, 120)))
+		}
+		fmt.Println(t.c(Gray, fmt.Sprintf("    ... (%d more lines)", len(lines)-5)))
+	} else {
+		for _, line := range lines {
+			fmt.Println(t.c(Gray, "    "+truncate(line, 120)))
+		}
+	}
+}
+
+// PrintError prints an error message.
+func (t *Terminal) PrintError(err error) {
+	fmt.Fprintln(os.Stderr, t.c(Red, "Error: "+err.Error()))
+	fmt.Println()
+}
+
+// PrintWarning prints a warning message.
+func (t *Terminal) PrintWarning(msg string) {
+	fmt.Println(t.c(Yellow, "Warning: "+msg))
+}
+
+// PrintSpinner prints a thinking indicator.
+func (t *Terminal) PrintSpinner() {
+	fmt.Print(t.c(Gray, "  thinking..."))
+}
+
+// ClearSpinner clears the thinking indicator.
+func (t *Terminal) ClearSpinner() {
+	fmt.Print("\r\033[K")
+}
+
+func truncate(s string, max int) string {
+	if len(s) <= max {
+		return s
+	}
+	return s[:max-3] + "..."
+}
