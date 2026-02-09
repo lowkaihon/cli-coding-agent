@@ -40,57 +40,70 @@ func EstimateTotalTokens(messages []llm.Message) int {
 	return total
 }
 
-// TruncateHistory truncates message history to stay within context limits.
-// Strategy:
-//  1. Always keep the system prompt (index 0)
-//  2. Always keep the first user message (index 1)
-//  3. Always keep the last N messages
-//  4. Summarize tool results in the middle
-//  5. Drop old tool call/result pairs first
-func TruncateHistory(messages []llm.Message, maxTokens int) []llm.Message {
-	currentTokens := EstimateTotalTokens(messages)
-	limit := int(float64(maxTokens) * (1 - ContextBuffer))
+// compactionPrompt returns the system prompt used when asking the LLM to summarize the conversation.
+func compactionPrompt() string {
+	return `You are a conversation summarizer. Your job is to produce a concise summary of the conversation provided.
 
-	if currentTokens <= limit {
-		return messages
-	}
+Your summary MUST preserve:
+- The user's current task and goal
+- All file paths, function names, and code identifiers discussed
+- Architectural decisions made and their rationale
+- Any errors encountered and how they were resolved
+- Key findings from file reads, searches, and tool outputs
 
-	// Keep first 2 messages (system + first user) and last 10 messages
-	keepEnd := 10
-	if keepEnd >= len(messages) {
-		return messages
-	}
-	keepStart := 2
-	if keepStart >= len(messages) {
-		return messages
-	}
+Your summary MUST drop:
+- Verbose tool outputs (full file contents, long grep results) — instead note what was learned
+- Redundant back-and-forth that doesn't affect the current state
+- Intermediate steps that led to dead ends (unless the dead end itself is informative)
 
-	// Work on the middle section
-	middle := make([]llm.Message, len(messages[keepStart:len(messages)-keepEnd]))
-	copy(middle, messages[keepStart:len(messages)-keepEnd])
+Output a structured, concise summary. Do not include any preamble or meta-commentary.`
+}
 
-	// First pass: summarize tool results (they're usually the biggest)
-	for i := range middle {
-		if middle[i].Role == "tool" && middle[i].Content != nil {
-			content := *middle[i].Content
-			if len(content) > 200 {
-				lines := strings.Count(content, "\n") + 1
-				summary := fmt.Sprintf("[Tool result truncated: %d lines, ~%d chars]", lines, len(content))
-				middle[i] = llm.ToolResultMessage(middle[i].ToolCallID, summary)
+// serializeHistory formats conversation messages into readable text for the LLM to summarize.
+func serializeHistory(messages []llm.Message) string {
+	var sb strings.Builder
+	for _, msg := range messages {
+		switch msg.Role {
+		case "system":
+			sb.WriteString("[System]\n")
+			if msg.Content != nil {
+				// Truncate system prompt to avoid overwhelming the summary
+				content := *msg.Content
+				if len(content) > 500 {
+					content = content[:500] + "...[truncated]"
+				}
+				sb.WriteString(content)
+			}
+		case "user":
+			sb.WriteString("[User]\n")
+			if msg.Content != nil {
+				sb.WriteString(*msg.Content)
+			}
+		case "assistant":
+			sb.WriteString("[Assistant]\n")
+			if msg.Content != nil {
+				sb.WriteString(*msg.Content)
+			}
+			for _, tc := range msg.ToolCalls {
+				fmt.Fprintf(&sb, "\n[Tool Call: %s(%s)]", tc.Function.Name, tc.Function.Arguments)
+			}
+		case "tool":
+			sb.WriteString("[Tool Result]\n")
+			if msg.Content != nil {
+				content := *msg.Content
+				// Truncate long tool results
+				if len(content) > 1000 {
+					content = content[:1000] + "...[truncated]"
+				}
+				sb.WriteString(content)
+			}
+		default:
+			fmt.Fprintf(&sb, "[%s]\n", msg.Role)
+			if msg.Content != nil {
+				sb.WriteString(*msg.Content)
 			}
 		}
+		sb.WriteString("\n\n")
 	}
-
-	result := make([]llm.Message, 0, keepStart+len(middle)+keepEnd)
-	result = append(result, messages[:keepStart]...)
-	result = append(result, middle...)
-	result = append(result, messages[len(messages)-keepEnd:]...)
-
-	// If still over limit, drop middle messages in pairs (tool_call + tool_result)
-	for EstimateTotalTokens(result) > limit && len(result) > keepStart+keepEnd {
-		// Remove from just after keepStart
-		result = append(result[:keepStart], result[keepStart+1:]...)
-	}
-
-	return result
+	return sb.String()
 }

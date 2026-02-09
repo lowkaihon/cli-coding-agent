@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 
 	"github.com/lowkaihon/cli-coding-agent/llm"
 	"github.com/lowkaihon/cli-coding-agent/tools"
@@ -16,18 +18,20 @@ const MaxIterationsPerTurn = 50
 
 // Agent orchestrates the LLM conversation and tool execution loop.
 type Agent struct {
-	client   llm.LLMClient
-	tools    *tools.Registry
-	messages []llm.Message
-	workDir  string
+	client        llm.LLMClient
+	tools         *tools.Registry
+	messages      []llm.Message
+	workDir       string
+	contextWindow int
 }
 
 // New creates a new Agent with the system prompt initialized.
-func New(client llm.LLMClient, registry *tools.Registry, workDir string) *Agent {
+func New(client llm.LLMClient, registry *tools.Registry, workDir string, contextWindow int) *Agent {
 	a := &Agent{
-		client:  client,
-		tools:   registry,
-		workDir: workDir,
+		client:        client,
+		tools:         registry,
+		workDir:       workDir,
+		contextWindow: contextWindow,
 	}
 	a.messages = []llm.Message{
 		llm.TextMessage("system", a.systemPrompt()),
@@ -40,6 +44,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string, term *ui.Terminal) 
 	a.messages = append(a.messages, llm.TextMessage("user", userMessage))
 
 	for iteration := 0; iteration < MaxIterationsPerTurn; iteration++ {
+		a.compactIfNeeded(ctx, term)
 		term.PrintSpinner()
 
 		events, err := a.client.StreamMessage(ctx, a.messages, a.tools.Definitions())
@@ -79,10 +84,70 @@ func (a *Agent) Run(ctx context.Context, userMessage string, term *ui.Terminal) 
 			fmt.Println()
 		}
 
-		for _, tc := range resp.Message.ToolCalls {
+		results := a.executeToolCalls(ctx, resp.Message.ToolCalls, term)
+		for _, r := range results {
+			a.messages = append(a.messages, llm.ToolResultMessage(r.id, r.output))
+		}
+	}
+
+	return fmt.Errorf("agent loop exceeded maximum iterations (%d)", MaxIterationsPerTurn)
+}
+
+type toolResult struct {
+	id     string
+	output string
+}
+
+// executeToolCalls runs tool calls, parallelizing read-only ones.
+func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall, term *ui.Terminal) []toolResult {
+	results := make([]toolResult, len(calls))
+
+	// Check if all calls are read-only
+	allReadOnly := true
+	for _, tc := range calls {
+		if !a.tools.IsReadOnly(tc.Function.Name) {
+			allReadOnly = false
+			break
+		}
+	}
+
+	if allReadOnly && len(calls) > 1 {
+		// Execute read-only tools concurrently
+		for i, tc := range calls {
+			term.PrintToolCall(tc.Function.Name, tc.Function.Arguments)
+			results[i].id = tc.ID
+		}
+
+		var wg sync.WaitGroup
+		for i, tc := range calls {
+			if !json.Valid([]byte(tc.Function.Arguments)) {
+				results[i].output = fmt.Sprintf("Error: invalid JSON in tool arguments: %s", tc.Function.Arguments)
+				continue
+			}
+			wg.Add(1)
+			go func(idx int, tc llm.ToolCall) {
+				defer wg.Done()
+				input := json.RawMessage(tc.Function.Arguments)
+				output, err := a.tools.Execute(ctx, tc.Function.Name, input)
+				if err != nil {
+					output = fmt.Sprintf("Error: %s", err)
+				}
+				results[idx].output = output
+			}(i, tc)
+		}
+		wg.Wait()
+
+		for _, r := range results {
+			term.PrintToolResult(r.output)
+		}
+	} else {
+		// Execute sequentially (write tools need confirmation one at a time)
+		for i, tc := range calls {
+			results[i].id = tc.ID
+
 			if !json.Valid([]byte(tc.Function.Arguments)) {
 				errMsg := fmt.Sprintf("Error: invalid JSON in tool arguments: %s", tc.Function.Arguments)
-				a.messages = append(a.messages, llm.ToolResultMessage(tc.ID, errMsg))
+				results[i].output = errMsg
 				term.PrintToolCall(tc.Function.Name, "invalid JSON")
 				continue
 			}
@@ -93,7 +158,6 @@ func (a *Agent) Run(ctx context.Context, userMessage string, term *ui.Terminal) 
 			output, toolErr := a.tools.Execute(ctx, tc.Function.Name, input)
 
 			if toolErr != nil {
-				// Check if it's a confirmation request
 				if confirm, ok := toolErr.(*tools.NeedsConfirmation); ok {
 					output = a.handleConfirmation(confirm, term)
 				} else {
@@ -102,11 +166,11 @@ func (a *Agent) Run(ctx context.Context, userMessage string, term *ui.Terminal) 
 			}
 
 			term.PrintToolResult(output)
-			a.messages = append(a.messages, llm.ToolResultMessage(tc.ID, output))
+			results[i].output = output
 		}
 	}
 
-	return fmt.Errorf("agent loop exceeded maximum iterations (%d)", MaxIterationsPerTurn)
+	return results
 }
 
 func (a *Agent) handleConfirmation(confirm *tools.NeedsConfirmation, term *ui.Terminal) string {
@@ -115,6 +179,8 @@ func (a *Agent) handleConfirmation(confirm *tools.NeedsConfirmation, term *ui.Te
 		term.PrintFilePreview(confirm.Path, confirm.Preview)
 	case "edit":
 		// Preview is the original content; we show the tool name and path
+		fmt.Println()
+	case "bash":
 		fmt.Println()
 	}
 
@@ -127,6 +193,118 @@ func (a *Agent) handleConfirmation(confirm *tools.NeedsConfirmation, term *ui.Te
 		return fmt.Sprintf("Error: %s", err)
 	}
 	return result
+}
+
+// compactIfNeeded checks if conversation tokens exceed 80% of the context window
+// and, if so, asks the LLM to produce a summary to replace the history.
+func (a *Agent) compactIfNeeded(ctx context.Context, term *ui.Terminal) {
+	if a.contextWindow <= 0 {
+		return
+	}
+
+	threshold := int(float64(a.contextWindow) * (1 - ContextBuffer))
+	current := EstimateTotalTokens(a.messages)
+	if current <= threshold {
+		return
+	}
+
+	term.PrintWarning("Context is large, compacting conversation...")
+	a.doCompact(ctx, term)
+}
+
+// Compact forces an LLM-based compaction of the conversation history.
+func (a *Agent) Compact(ctx context.Context, term *ui.Terminal) error {
+	if len(a.messages) <= 1 {
+		term.PrintWarning("Nothing to compact.")
+		return nil
+	}
+	term.PrintWarning("Compacting conversation...")
+	a.doCompact(ctx, term)
+	return nil
+}
+
+// Clear resets the conversation history to just the system prompt.
+func (a *Agent) Clear(term *ui.Terminal) {
+	a.messages = []llm.Message{a.messages[0]}
+	term.PrintWarning("Conversation cleared.")
+}
+
+// doCompact performs the actual LLM-based compaction.
+func (a *Agent) doCompact(ctx context.Context, term *ui.Terminal) {
+	history := serializeHistory(a.messages)
+	compactMessages := []llm.Message{
+		llm.TextMessage("system", compactionPrompt()),
+		llm.TextMessage("user", history),
+	}
+
+	resp, err := a.client.SendMessage(ctx, compactMessages, nil)
+	if err != nil {
+		term.PrintWarning("Compaction failed, continuing with full history.")
+		return
+	}
+
+	summary := ""
+	if resp.Message.Content != nil {
+		summary = *resp.Message.Content
+	}
+
+	// Replace history: keep system prompt, add summary, preserve last user message
+	systemMsg := a.messages[0]
+
+	var lastUserMsg *llm.Message
+	for i := len(a.messages) - 1; i >= 0; i-- {
+		if a.messages[i].Role == "user" {
+			lastUserMsg = &a.messages[i]
+			break
+		}
+	}
+
+	a.messages = []llm.Message{systemMsg}
+	if summary != "" {
+		a.messages = append(a.messages, llm.TextMessage("user",
+			"[Conversation compacted] Here is a summary of our conversation so far:\n\n"+summary))
+	}
+	if lastUserMsg != nil {
+		a.messages = append(a.messages, *lastUserMsg)
+	}
+
+	term.PrintWarning("Context compacted successfully.")
+}
+
+// ContextStats holds context usage statistics.
+type ContextStats struct {
+	TotalTokens     int
+	ContextWindow   int
+	Threshold       int
+	MessageCount    int
+	SystemTokens    int
+	UserTokens      int
+	AssistantTokens int
+	ToolTokens      int
+}
+
+// ContextUsage returns current context usage statistics.
+func (a *Agent) ContextUsage() ContextStats {
+	stats := ContextStats{
+		ContextWindow: a.contextWindow,
+		Threshold:     int(float64(a.contextWindow) * (1 - ContextBuffer)),
+		MessageCount:  len(a.messages),
+	}
+	for _, msg := range a.messages {
+		tokens := EstimateTokens(msg)
+		stats.TotalTokens += tokens
+		switch msg.Role {
+		case "system":
+			stats.SystemTokens += tokens
+		case "user":
+			stats.UserTokens += tokens
+		case "assistant":
+			stats.AssistantTokens += tokens
+		case "tool":
+			stats.ToolTokens += tokens
+		}
+	}
+	return stats
 }
 
 func (a *Agent) systemPrompt() string {
@@ -149,6 +327,13 @@ You have the following tools available:
 - **read**: Read file contents with line numbers. Use start_line/end_line for large files.
 - **write**: Create new files. User confirmation required.
 - **edit**: Edit files by exact string replacement. The old_str must match exactly once. User confirmation required.
+- **bash**: Execute shell commands (builds, tests, git, etc.). User confirmation required. Timeout: 30s default, 120s max.
+
+## Memory
+
+Project knowledge is stored in MEMORY.md at the project root. This file is human-editable and version-controlled.
+To persist important context (conventions, architecture decisions, gotchas), use the **edit** tool to update MEMORY.md.
+The current contents of MEMORY.md (if any) are shown below under "Project Memory".
 
 ## Guidelines
 
@@ -159,5 +344,14 @@ You have the following tools available:
 5. **Be precise with edits**: Include enough context in old_str to uniquely identify the location. If an edit fails due to multiple matches, include more surrounding lines.
 6. **One step at a time**: Don't try to do everything in one response. Break complex tasks into steps.
 `)
+
+	// Inject project memory if available
+	memoryPath := filepath.Join(a.workDir, "MEMORY.md")
+	if data, err := os.ReadFile(memoryPath); err == nil && len(data) > 0 {
+		sb.WriteString("\n## Project Memory (MEMORY.md)\n\n")
+		sb.WriteString(string(data))
+		sb.WriteString("\n")
+	}
+
 	return sb.String()
 }

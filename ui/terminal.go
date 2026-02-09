@@ -52,7 +52,7 @@ func (t *Terminal) c(code, text string) string {
 func (t *Terminal) PrintBanner(model, workDir string) {
 	fmt.Println(t.c(Bold+Cyan, "pilot") + t.c(Gray, " — AI coding agent"))
 	fmt.Println(t.c(Gray, fmt.Sprintf("Model: %s | Dir: %s", model, workDir)))
-	fmt.Println(t.c(Gray, "Type 'exit' to quit."))
+	fmt.Println(t.c(Gray, "Type '/help' for commands."))
 	fmt.Println()
 }
 
@@ -111,6 +111,41 @@ func (t *Terminal) PrintSpinner() {
 // ClearSpinner clears the thinking indicator.
 func (t *Terminal) ClearSpinner() {
 	fmt.Print("\r\033[K")
+}
+
+// PrintHelp prints all available slash commands.
+func (t *Terminal) PrintHelp() {
+	fmt.Println(t.c(Bold, "Commands"))
+	fmt.Println(t.c(Cyan, "  /help   ") + " Show this help message")
+	fmt.Println(t.c(Cyan, "  /compact") + " Compact conversation (LLM summarizes history)")
+	fmt.Println(t.c(Cyan, "  /clear  ") + " Clear conversation history")
+	fmt.Println(t.c(Cyan, "  /context") + " Show context window usage")
+	fmt.Println(t.c(Cyan, "  /quit   ") + " Exit Pilot")
+	fmt.Println()
+}
+
+// PrintContextUsage prints context usage statistics.
+func (t *Terminal) PrintContextUsage(total, window, threshold, msgCount, system, user, assistant, tool int) {
+	pct := 0.0
+	if window > 0 {
+		pct = float64(total) / float64(window) * 100
+	}
+	fmt.Println(t.c(Bold, "Context Usage"))
+	fmt.Printf("  Tokens: %s / %s (%.1f%%)\n", formatNum(total), formatNum(window), pct)
+	fmt.Printf("  Compact at: %s (80%%)\n", formatNum(threshold))
+	fmt.Printf("  Messages: %d\n", msgCount)
+	fmt.Printf("    %s %s tokens\n", t.c(Gray, "System:   "), formatNum(system))
+	fmt.Printf("    %s %s tokens\n", t.c(Cyan, "User:     "), formatNum(user))
+	fmt.Printf("    %s %s tokens\n", t.c(Green, "Assistant:"), formatNum(assistant))
+	fmt.Printf("    %s %s tokens\n", t.c(Yellow, "Tool:     "), formatNum(tool))
+	fmt.Println()
+}
+
+func formatNum(n int) string {
+	if n < 1000 {
+		return fmt.Sprintf("%d", n)
+	}
+	return fmt.Sprintf("%d,%03d", n/1000, n%1000)
 }
 
 func truncate(s string, max int) string {

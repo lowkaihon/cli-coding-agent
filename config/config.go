@@ -9,10 +9,12 @@ import (
 )
 
 type Config struct {
-	APIKey    string
-	Model     string
-	MaxTokens int
-	BaseURL   string
+	Provider      string
+	APIKey        string
+	Model         string
+	MaxTokens     int
+	BaseURL       string
+	ContextWindow int
 }
 
 // ConfigDir returns the XDG-compliant config directory for Pilot.
@@ -28,7 +30,7 @@ func ConfigDir() (string, error) {
 	return filepath.Join(home, ".config", "pilot"), nil
 }
 
-func Load() (*Config, error) {
+func Load(provider string) (*Config, error) {
 	// Load .env file in cwd if present
 	loadEnvFile(".env")
 
@@ -37,28 +39,54 @@ func Load() (*Config, error) {
 		loadEnvFile(filepath.Join(configDir, "credentials"))
 	}
 
-	apiKey := os.Getenv("OPENAI_API_KEY")
-	if apiKey == "" {
-		var err error
-		apiKey, err = promptAPIKey()
-		if err != nil {
-			return nil, err
-		}
+	if provider == "" {
+		provider = "openai"
 	}
 
-	cfg := &Config{
-		APIKey:    apiKey,
-		Model:     "gpt-4o-mini",
-		MaxTokens: 4096,
-		BaseURL:   "https://api.openai.com/v1",
+	var cfg *Config
+	switch provider {
+	case "anthropic":
+		apiKey := os.Getenv("ANTHROPIC_API_KEY")
+		if apiKey == "" {
+			var err error
+			apiKey, err = promptAPIKeyFor("Anthropic", "ANTHROPIC_API_KEY")
+			if err != nil {
+				return nil, err
+			}
+		}
+		cfg = &Config{
+			Provider:      "anthropic",
+			APIKey:        apiKey,
+			Model:         "claude-sonnet-4-5-20250929",
+			MaxTokens:     4096,
+			BaseURL:       "https://api.anthropic.com/v1",
+			ContextWindow: 200000,
+		}
+	default:
+		apiKey := os.Getenv("OPENAI_API_KEY")
+		if apiKey == "" {
+			var err error
+			apiKey, err = promptAPIKeyFor("OpenAI", "OPENAI_API_KEY")
+			if err != nil {
+				return nil, err
+			}
+		}
+		cfg = &Config{
+			Provider:      "openai",
+			APIKey:        apiKey,
+			Model:         "gpt-4o-mini",
+			MaxTokens:     4096,
+			BaseURL:       "https://api.openai.com/v1",
+			ContextWindow: 128000,
+		}
 	}
 
 	return cfg, nil
 }
 
-// promptAPIKey asks the user for their API key and saves it to the credentials file.
-func promptAPIKey() (string, error) {
-	fmt.Print("Enter your OpenAI API key: ")
+// promptAPIKeyFor asks the user for an API key and saves it to the credentials file.
+func promptAPIKeyFor(providerName, envVar string) (string, error) {
+	fmt.Printf("Enter your %s API key: ", providerName)
 	reader := bufio.NewReader(os.Stdin)
 	key, err := reader.ReadString('\n')
 	if err != nil {
@@ -72,7 +100,6 @@ func promptAPIKey() (string, error) {
 	// Save to credentials file
 	configDir, err := ConfigDir()
 	if err != nil {
-		// Can't save but can still use the key this session
 		return key, nil
 	}
 
@@ -81,11 +108,14 @@ func promptAPIKey() (string, error) {
 	}
 
 	credPath := filepath.Join(configDir, "credentials")
-	content := []byte("OPENAI_API_KEY=" + key + "\n")
-	if err := os.WriteFile(credPath, content, 0600); err != nil {
+	// Append to existing credentials rather than overwrite
+	f, err := os.OpenFile(credPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
 		return key, nil
 	}
+	defer f.Close()
 
+	fmt.Fprintf(f, "%s=%s\n", envVar, key)
 	fmt.Printf("API key saved to %s\n", credPath)
 	return key, nil
 }

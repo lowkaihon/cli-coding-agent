@@ -55,6 +55,16 @@ func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessa
 	return "", fmt.Errorf("unknown tool: %s", name)
 }
 
+// IsReadOnly returns true for tools that don't modify the filesystem.
+func (r *Registry) IsReadOnly(name string) bool {
+	switch name {
+	case "glob", "grep", "ls", "read":
+		return true
+	default:
+		return false
+	}
+}
+
 // Definitions returns tool definitions in stable registration order.
 func (r *Registry) Definitions() []llm.ToolDef {
 	defs := make([]llm.ToolDef, len(r.tools))
@@ -175,4 +185,23 @@ func (r *Registry) registerBuiltins() {
 		}`),
 		r.editTool,
 	)
+
+	r.register("bash", "Execute a shell command. Runs in the working directory. Use for builds, tests, git, etc. All commands require user confirmation.",
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"command": {
+					"type": "string",
+					"description": "Shell command to execute"
+				},
+				"timeout": {
+					"type": "integer",
+					"description": "Timeout in seconds (default: 30, max: 120)"
+				}
+			},
+			"required": ["command"]
+		}`),
+		r.bashTool,
+	)
+
 }

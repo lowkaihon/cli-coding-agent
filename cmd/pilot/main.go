@@ -18,14 +18,15 @@ import (
 )
 
 func main() {
-	model := flag.String("model", "", "Model name (default: gpt-4o-mini)")
+	model := flag.String("model", "", "Model name (default depends on provider)")
+	provider := flag.String("provider", "", "LLM provider: openai (default) or anthropic")
 	flag.Parse()
 
 	// Set up graceful shutdown
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	cfg, err := config.Load()
+	cfg, err := config.Load(*provider)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		os.Exit(1)
@@ -35,7 +36,13 @@ func main() {
 		cfg.Model = *model
 	}
 
-	client := llm.NewOpenAIClient(cfg.APIKey, cfg.Model, cfg.MaxTokens, cfg.BaseURL)
+	var client llm.LLMClient
+	switch cfg.Provider {
+	case "anthropic":
+		client = llm.NewAnthropicClient(cfg.APIKey, cfg.Model, cfg.MaxTokens, cfg.BaseURL)
+	default:
+		client = llm.NewOpenAIClient(cfg.APIKey, cfg.Model, cfg.MaxTokens, cfg.BaseURL)
+	}
 
 	workDir, err := os.Getwd()
 	if err != nil {
@@ -44,14 +51,15 @@ func main() {
 	}
 
 	registry := tools.NewRegistry(workDir)
-	ag := agent.New(client, registry, workDir)
+	ag := agent.New(client, registry, workDir, cfg.ContextWindow)
 
 	term := ui.NewTerminal()
 	term.PrintBanner(cfg.Model, workDir)
 
 	reader := bufio.NewReader(os.Stdin)
 
-	for {
+	running := true
+	for running {
 		term.PrintPrompt()
 
 		input, err := reader.ReadString('\n')
@@ -66,16 +74,31 @@ func main() {
 			continue
 		}
 
-		if input == "exit" || input == "quit" {
-			break
-		}
-
-		if err := ag.Run(ctx, input, term); err != nil {
-			if ctx.Err() != nil {
-				fmt.Println("\nInterrupted.")
-				break
+		switch input {
+		case "/help":
+			term.PrintHelp()
+		case "/quit":
+			running = false
+		case "/compact":
+			if err := ag.Compact(ctx, term); err != nil {
+				term.PrintError(err)
 			}
-			term.PrintError(err)
+		case "/clear":
+			ag.Clear(term)
+		case "/context":
+			s := ag.ContextUsage()
+			term.PrintContextUsage(s.TotalTokens, s.ContextWindow, s.Threshold,
+				s.MessageCount, s.SystemTokens, s.UserTokens,
+				s.AssistantTokens, s.ToolTokens)
+		default:
+			if err := ag.Run(ctx, input, term); err != nil {
+				if ctx.Err() != nil {
+					fmt.Println("\nInterrupted.")
+					running = false
+				} else {
+					term.PrintError(err)
+				}
+			}
 		}
 	}
 }
