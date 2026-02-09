@@ -17,35 +17,50 @@ No agent frameworks. No LangChain. Just an LLM API client and a hand-rolled tool
 
 ## Setup
 
-**Requirements:** Go 1.21+ and an OpenAI API key.
+**Requirements:** Go 1.25+ and an OpenAI API key.
+
+### Install
 
 ```bash
-# Clone and build
-git clone <repo-url>
+# Option A: go install (recommended)
+go install github.com/lowkaihon/cli-coding-agent/cmd/pilot@latest
+
+# Option B: build from source
+git clone https://github.com/lowkaihon/cli-coding-agent.git
 cd cli-coding-agent
-go build -o pilot .
+go build -o pilot ./cmd/pilot
+# Copy pilot (or pilot.exe on Windows) to a directory on your PATH
+```
 
-# Set your API key (pick one method)
+### API Key
 
-# Option A: .env file (recommended)
-echo 'OPENAI_API_KEY=sk-...' > .env
+On first run, Pilot will prompt for your OpenAI API key and save it to `~/.config/pilot/credentials`.
 
-# Option B: environment variable
+You can also set it manually via environment variable:
+
+```bash
 export OPENAI_API_KEY="sk-..."
 ```
 
+**Lookup order:** environment variable → `.env` in current directory → `~/.config/pilot/credentials`
+
 ## Usage
 
+Navigate to any project directory and run `pilot`:
+
 ```bash
-# Run with default model (gpt-4o-mini)
-go run .
+cd your-project/
+pilot
 
-# Run with a different model
-go run . -model gpt-4o
+# Or with a specific model
+pilot -model gpt-4o
+```
 
-# Or use the built binary
-./pilot
-./pilot -model gpt-4o
+If developing Pilot itself, you can also use:
+
+```bash
+go run ./cmd/pilot
+go run ./cmd/pilot -model gpt-4o
 ```
 
 Once running, type natural language instructions at the `>` prompt:
@@ -75,7 +90,9 @@ Type `exit` or press Ctrl+D to quit. Ctrl+C for graceful shutdown.
 
 ```
 cli-coding-agent/
-├── main.go           # Entry point, REPL, signal handling
+├── cmd/
+│   └── pilot/
+│       └── main.go   # Entry point, REPL, signal handling
 ├── agent/
 │   ├── agent.go      # Core agent loop (max 50 iterations/turn)
 │   ├── context.go    # Token estimation + history truncation

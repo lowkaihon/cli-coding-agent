@@ -7,9 +7,9 @@ import (
 
 	"strings"
 
-	"github.com/kaiho/pilot/llm"
-	"github.com/kaiho/pilot/tools"
-	"github.com/kaiho/pilot/ui"
+	"github.com/lowkaihon/cli-coding-agent/llm"
+	"github.com/lowkaihon/cli-coding-agent/tools"
+	"github.com/lowkaihon/cli-coding-agent/ui"
 )
 
 const MaxIterationsPerTurn = 50

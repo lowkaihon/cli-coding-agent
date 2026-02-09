@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/kaiho/pilot/llm"
+	"github.com/lowkaihon/cli-coding-agent/llm"
 )
 
 const (

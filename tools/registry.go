@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/kaiho/pilot/llm"
+	"github.com/lowkaihon/cli-coding-agent/llm"
 )
 
 // ToolFunc is the signature for tool implementations.

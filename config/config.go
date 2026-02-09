@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
@@ -14,13 +15,35 @@ type Config struct {
 	BaseURL   string
 }
 
+// ConfigDir returns the XDG-compliant config directory for Pilot.
+// Uses $XDG_CONFIG_HOME/pilot if set, otherwise ~/.config/pilot.
+func ConfigDir() (string, error) {
+	if dir := os.Getenv("XDG_CONFIG_HOME"); dir != "" && filepath.IsAbs(dir) {
+		return filepath.Join(dir, "pilot"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home dir: %w", err)
+	}
+	return filepath.Join(home, ".config", "pilot"), nil
+}
+
 func Load() (*Config, error) {
-	// Load .env file if present (before reading env vars)
+	// Load .env file in cwd if present
 	loadEnvFile(".env")
+
+	// Load credentials from XDG config dir
+	if configDir, err := ConfigDir(); err == nil {
+		loadEnvFile(filepath.Join(configDir, "credentials"))
+	}
 
 	apiKey := os.Getenv("OPENAI_API_KEY")
 	if apiKey == "" {
-		return nil, fmt.Errorf("OPENAI_API_KEY environment variable is not set.\nSet it via: export OPENAI_API_KEY=\"sk-...\" or add it to a .env file")
+		var err error
+		apiKey, err = promptAPIKey()
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	cfg := &Config{
@@ -31,6 +54,40 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// promptAPIKey asks the user for their API key and saves it to the credentials file.
+func promptAPIKey() (string, error) {
+	fmt.Print("Enter your OpenAI API key: ")
+	reader := bufio.NewReader(os.Stdin)
+	key, err := reader.ReadString('\n')
+	if err != nil {
+		return "", fmt.Errorf("failed to read API key: %w", err)
+	}
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", fmt.Errorf("API key cannot be empty")
+	}
+
+	// Save to credentials file
+	configDir, err := ConfigDir()
+	if err != nil {
+		// Can't save but can still use the key this session
+		return key, nil
+	}
+
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		return key, nil
+	}
+
+	credPath := filepath.Join(configDir, "credentials")
+	content := []byte("OPENAI_API_KEY=" + key + "\n")
+	if err := os.WriteFile(credPath, content, 0600); err != nil {
+		return key, nil
+	}
+
+	fmt.Printf("API key saved to %s\n", credPath)
+	return key, nil
 }
 
 // loadEnvFile reads a .env file and sets environment variables.

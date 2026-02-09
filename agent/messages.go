@@ -1,6 +1,6 @@
 package agent
 
-import "github.com/kaiho/pilot/llm"
+import "github.com/lowkaihon/cli-coding-agent/llm"
 
 // MessageHistory provides access to the conversation history.
 func (a *Agent) MessageHistory() []llm.Message {
