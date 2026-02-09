@@ -21,7 +21,7 @@ Pilot is a terminal-based AI coding agent. The main loop is a REPL that passes u
 
 ```
 cmd/pilot/main.go (REPL + slash commands + signal handling)
-  → /compact, /clear, /quit handled directly
+  → /help, /model, /compact, /clear, /context, /quit handled directly
   → agent.Agent.Run()
       → compactIfNeeded()                — auto-compact at 80% context window
       → llm.LLMClient.StreamMessage()   — sends messages, returns SSE event channel
@@ -57,7 +57,7 @@ cmd/pilot/main.go (REPL + slash commands + signal handling)
 
 ## Context Management
 
-The agent auto-compacts when estimated tokens exceed 80% of the context window (`ContextBuffer = 0.2`). Token estimation uses a chars/4 heuristic (`EstimateTokens` in `agent/context.go`).
+The agent auto-compacts when token usage exceeds 80% of the context window (`ContextBuffer = 0.2`). It uses API-reported `TotalTokens` from the most recent response (`lastTokensUsed` in `agent/agent.go`), falling back to a chars/4 heuristic (`EstimateTokens` in `agent/context.go`) before the first API call.
 
 **Compaction flow** (`doCompact` in `agent/agent.go`):
 1. `serializeHistory()` formats all messages into readable text (truncating long tool results and system prompts)

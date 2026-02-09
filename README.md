@@ -58,19 +58,12 @@ Navigate to any project directory and run `pilot`:
 ```bash
 cd your-project/
 pilot
-
-# Or with a specific model
-pilot -model gpt-4o
-
-# Or with Anthropic
-pilot -provider anthropic
 ```
 
 If developing Pilot itself, you can also use:
 
 ```bash
 go run ./cmd/pilot
-go run ./cmd/pilot -model gpt-4o
 ```
 
 Once running, type natural language instructions at the `>` prompt:
@@ -87,11 +80,12 @@ Once running, type natural language instructions at the `>` prompt:
 
 | Command | Description |
 |---------|-------------|
-| `/quit` | Exit Pilot |
+| `/help` | Show available commands |
+| `/model` | Switch LLM model |
 | `/compact` | Force conversation compaction (LLM summarizes history) |
 | `/clear` | Clear conversation history (fresh start) |
-| Ctrl+D | Exit (EOF) |
-| Ctrl+C | Graceful shutdown |
+| `/context` | Show context window usage |
+| `/quit` | Exit Pilot |
 
 ## Tools
 
@@ -118,12 +112,17 @@ cli-coding-agent/
 │   ├── context.go            # Token estimation, compaction prompt, history serialization
 │   └── messages.go           # Message history access
 ├── llm/
-│   ├── client.go             # OpenAI client
-│   ├── anthropic.go          # Anthropic client
-│   ├── anthropic_stream.go   # Anthropic SSE streaming
-│   ├── stream.go             # OpenAI SSE streaming + accumulator
-│   ├── stream_test.go        # Streaming tests
-│   └── types.go              # Message, ToolCall, Response types
+│   ├── types.go                 # Message, ToolCall, Response, StreamEvent types
+│   ├── openai_chat.go           # OpenAI Chat Completions client
+│   ├── openai_chat_types.go     # Chat Completions request/response types
+│   ├── openai_chat_stream.go    # Chat Completions SSE streaming
+│   ├── openai_responses.go      # OpenAI Responses client (GPT-5.x)
+│   ├── openai_responses_stream.go # Responses SSE streaming
+│   ├── openai_responses_test.go # Responses client tests
+│   ├── anthropic.go             # Anthropic client
+│   ├── anthropic_stream.go      # Anthropic SSE streaming
+│   ├── stream.go                # Stream accumulator (shared)
+│   └── stream_test.go           # Streaming tests
 ├── tools/
 │   ├── registry.go           # Tool registration + dispatch
 │   ├── tools_test.go         # Tool tests
@@ -175,14 +174,3 @@ User input
 - `NeedsConfirmation` error type to trigger user prompts from tool code
 - `context.Context` threaded through all I/O for cancellation support
 - LLM-based compaction instead of mechanical truncation — preserves semantic context
-
-## Configuration
-
-| Setting | Default | Source |
-|---------|---------|--------|
-| Provider | `openai` | `-provider` flag |
-| API Key | — | `OPENAI_API_KEY` or `ANTHROPIC_API_KEY` env var, `.env`, or credentials file |
-| Model | `gpt-4o-mini` (OpenAI), `claude-sonnet-4-5-20250929` (Anthropic) | `-model` flag |
-| Max Tokens | 4096 | hardcoded |
-| Context Window | 128,000 (OpenAI), 200,000 (Anthropic) | per-provider default |
-| Base URL | `https://api.openai.com/v1` or `https://api.anthropic.com/v1` | hardcoded |

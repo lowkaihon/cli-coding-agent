@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -26,6 +27,19 @@ func EstimateTokens(msg llm.Message) int {
 	}
 	// Minimum 1 token per message for overhead
 	if tokens < 1 {
+		tokens = 1
+	}
+	return tokens
+}
+
+// EstimateToolDefTokens estimates token count for tool definitions using the chars/4 heuristic.
+func EstimateToolDefTokens(defs []llm.ToolDef) int {
+	data, err := json.Marshal(defs)
+	if err != nil {
+		return 0
+	}
+	tokens := len(data) / CharsPerToken
+	if tokens < 1 && len(defs) > 0 {
 		tokens = 1
 	}
 	return tokens

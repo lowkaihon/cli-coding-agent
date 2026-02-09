@@ -18,11 +18,12 @@ const MaxIterationsPerTurn = 50
 
 // Agent orchestrates the LLM conversation and tool execution loop.
 type Agent struct {
-	client        llm.LLMClient
-	tools         *tools.Registry
-	messages      []llm.Message
-	workDir       string
-	contextWindow int
+	client         llm.LLMClient
+	tools          *tools.Registry
+	messages       []llm.Message
+	workDir        string
+	contextWindow  int
+	lastTokensUsed int // TotalTokens from most recent API response
 }
 
 // New creates a new Agent with the system prompt initialized.
@@ -37,6 +38,12 @@ func New(client llm.LLMClient, registry *tools.Registry, workDir string, context
 		llm.TextMessage("system", a.systemPrompt()),
 	}
 	return a
+}
+
+// SetClient swaps the LLM client and context window (e.g., after /model).
+func (a *Agent) SetClient(client llm.LLMClient, contextWindow int) {
+	a.client = client
+	a.contextWindow = contextWindow
 }
 
 // Run processes a user message through the agent loop.
@@ -60,6 +67,10 @@ func (a *Agent) Run(ctx context.Context, userMessage string, term *ui.Terminal) 
 		})
 		if err != nil {
 			return fmt.Errorf("stream error: %w", err)
+		}
+
+		if resp.Usage.TotalTokens > 0 {
+			a.lastTokensUsed = resp.Usage.TotalTokens
 		}
 
 		a.messages = append(a.messages, resp.Message)
@@ -203,7 +214,10 @@ func (a *Agent) compactIfNeeded(ctx context.Context, term *ui.Terminal) {
 	}
 
 	threshold := int(float64(a.contextWindow) * (1 - ContextBuffer))
-	current := EstimateTotalTokens(a.messages)
+	current := a.lastTokensUsed
+	if current == 0 {
+		current = EstimateTotalTokens(a.messages)
+	}
 	if current <= threshold {
 		return
 	}
@@ -226,6 +240,7 @@ func (a *Agent) Compact(ctx context.Context, term *ui.Terminal) error {
 // Clear resets the conversation history to just the system prompt.
 func (a *Agent) Clear(term *ui.Terminal) {
 	a.messages = []llm.Message{a.messages[0]}
+	a.lastTokensUsed = 0
 	term.PrintWarning("Conversation cleared.")
 }
 
@@ -268,19 +283,20 @@ func (a *Agent) doCompact(ctx context.Context, term *ui.Terminal) {
 		a.messages = append(a.messages, *lastUserMsg)
 	}
 
+	a.lastTokensUsed = 0
 	term.PrintWarning("Context compacted successfully.")
 }
 
 // ContextStats holds context usage statistics.
 type ContextStats struct {
-	TotalTokens     int
-	ContextWindow   int
-	Threshold       int
-	MessageCount    int
-	SystemTokens    int
-	UserTokens      int
-	AssistantTokens int
-	ToolTokens      int
+	TotalTokens   int // actual from API, or estimated
+	ContextWindow int
+	Threshold     int
+	MessageCount  int
+	SystemTokens  int // system prompt estimate
+	ToolDefTokens int // tool definitions estimate
+	MessageTokens int // all user + assistant + tool result messages
+	ActualTokens  int // from latest API response (0 if no call yet)
 }
 
 // ContextUsage returns current context usage statistics.
@@ -289,20 +305,20 @@ func (a *Agent) ContextUsage() ContextStats {
 		ContextWindow: a.contextWindow,
 		Threshold:     int(float64(a.contextWindow) * (1 - ContextBuffer)),
 		MessageCount:  len(a.messages),
+		ActualTokens:  a.lastTokensUsed,
 	}
 	for _, msg := range a.messages {
 		tokens := EstimateTokens(msg)
-		stats.TotalTokens += tokens
-		switch msg.Role {
-		case "system":
+		if msg.Role == "system" {
 			stats.SystemTokens += tokens
-		case "user":
-			stats.UserTokens += tokens
-		case "assistant":
-			stats.AssistantTokens += tokens
-		case "tool":
-			stats.ToolTokens += tokens
+		} else {
+			stats.MessageTokens += tokens
 		}
+	}
+	stats.ToolDefTokens = EstimateToolDefTokens(a.tools.Definitions())
+	stats.TotalTokens = stats.ActualTokens
+	if stats.TotalTokens == 0 {
+		stats.TotalTokens = stats.SystemTokens + stats.ToolDefTokens + stats.MessageTokens
 	}
 	return stats
 }

@@ -117,6 +117,7 @@ func (t *Terminal) ClearSpinner() {
 func (t *Terminal) PrintHelp() {
 	fmt.Println(t.c(Bold, "Commands"))
 	fmt.Println(t.c(Cyan, "  /help   ") + " Show this help message")
+	fmt.Println(t.c(Cyan, "  /model  ") + " Switch LLM model")
 	fmt.Println(t.c(Cyan, "  /compact") + " Compact conversation (LLM summarizes history)")
 	fmt.Println(t.c(Cyan, "  /clear  ") + " Clear conversation history")
 	fmt.Println(t.c(Cyan, "  /context") + " Show context window usage")
@@ -124,8 +125,34 @@ func (t *Terminal) PrintHelp() {
 	fmt.Println()
 }
 
+// ModelOption represents a model choice in the /model menu.
+type ModelOption struct {
+	Label   string
+	Current bool
+}
+
+// PrintModelMenu prints the numbered model selection menu.
+func (t *Terminal) PrintModelMenu(options []ModelOption) {
+	fmt.Println(t.c(Bold, "Select a model:"))
+	for i, opt := range options {
+		marker := "  "
+		if opt.Current {
+			marker = t.c(Green, "→ ")
+		}
+		fmt.Printf("%s%s %s\n", marker, t.c(Cyan, fmt.Sprintf("[%d]", i+1)), opt.Label)
+	}
+	fmt.Printf("  %s %s\n", t.c(Cyan, "[0]"), "Enter a custom model name")
+	fmt.Println()
+}
+
+// PrintModelSwitch prints a model switch confirmation.
+func (t *Terminal) PrintModelSwitch(model string) {
+	fmt.Println(t.c(Green, fmt.Sprintf("Switched to %s", model)))
+	fmt.Println()
+}
+
 // PrintContextUsage prints context usage statistics.
-func (t *Terminal) PrintContextUsage(total, window, threshold, msgCount, system, user, assistant, tool int) {
+func (t *Terminal) PrintContextUsage(total, window, threshold, msgCount, systemTokens, toolDefTokens, messageTokens, actualTokens int) {
 	pct := 0.0
 	if window > 0 {
 		pct = float64(total) / float64(window) * 100
@@ -133,11 +160,16 @@ func (t *Terminal) PrintContextUsage(total, window, threshold, msgCount, system,
 	fmt.Println(t.c(Bold, "Context Usage"))
 	fmt.Printf("  Tokens: %s / %s (%.1f%%)\n", formatNum(total), formatNum(window), pct)
 	fmt.Printf("  Compact at: %s (80%%)\n", formatNum(threshold))
-	fmt.Printf("  Messages: %d\n", msgCount)
-	fmt.Printf("    %s %s tokens\n", t.c(Gray, "System:   "), formatNum(system))
-	fmt.Printf("    %s %s tokens\n", t.c(Cyan, "User:     "), formatNum(user))
-	fmt.Printf("    %s %s tokens\n", t.c(Green, "Assistant:"), formatNum(assistant))
-	fmt.Printf("    %s %s tokens\n", t.c(Yellow, "Tool:     "), formatNum(tool))
+	fmt.Println()
+	fmt.Printf("    %s  ~%s tokens\n", t.c(Gray, "System prompt   "), formatNum(systemTokens))
+	fmt.Printf("    %s  ~%s tokens\n", t.c(Yellow, "Tool definitions"), formatNum(toolDefTokens))
+	fmt.Printf("    %s  ~%s tokens\n", t.c(Cyan, fmt.Sprintf("Messages (%d)   ", msgCount)), formatNum(messageTokens))
+	fmt.Println()
+	if actualTokens > 0 {
+		fmt.Printf("    %s  %s tokens (from API)\n", t.c(Green, "Actual usage    "), formatNum(actualTokens))
+	} else {
+		fmt.Printf("    %s\n", t.c(Gray, "No API usage data yet"))
+	}
 	fmt.Println()
 }
 

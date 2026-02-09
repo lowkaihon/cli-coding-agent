@@ -12,13 +12,7 @@ import (
 	"time"
 )
 
-// LLMClient is the interface for interacting with an LLM API.
-type LLMClient interface {
-	SendMessage(ctx context.Context, messages []Message, tools []ToolDef) (*Response, error)
-	StreamMessage(ctx context.Context, messages []Message, tools []ToolDef) (<-chan StreamEvent, error)
-}
-
-// OpenAIClient implements LLMClient for the OpenAI API.
+// OpenAIClient implements LLMClient for the OpenAI Chat Completions API.
 type OpenAIClient struct {
 	apiKey    string
 	model     string

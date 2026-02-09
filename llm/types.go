@@ -1,8 +1,17 @@
 package llm
 
-import "encoding/json"
+import (
+	"context"
+	"encoding/json"
+)
 
-// Message represents an OpenAI chat message.
+// LLMClient is the interface for interacting with an LLM API.
+type LLMClient interface {
+	SendMessage(ctx context.Context, messages []Message, tools []ToolDef) (*Response, error)
+	StreamMessage(ctx context.Context, messages []Message, tools []ToolDef) (<-chan StreamEvent, error)
+}
+
+// Message represents a chat message.
 // Content is a pointer to distinguish empty string (valid for tool results) from absent.
 type Message struct {
 	Role       string     `json:"role"`
@@ -60,20 +69,6 @@ type FunctionDef struct {
 	Parameters  json.RawMessage `json:"parameters"`
 }
 
-// APIResponse is the raw response from the OpenAI chat completions API.
-type APIResponse struct {
-	ID      string   `json:"id"`
-	Choices []Choice `json:"choices"`
-	Usage   Usage    `json:"usage"`
-}
-
-// Choice represents a single completion choice.
-type Choice struct {
-	Index        int     `json:"index"`
-	Message      Message `json:"message"`
-	FinishReason string  `json:"finish_reason"`
-}
-
 // Usage tracks token consumption.
 type Usage struct {
 	PromptTokens     int `json:"prompt_tokens"`
@@ -113,42 +108,4 @@ type ToolCallDelta struct {
 		Name      string `json:"name,omitempty"`
 		Arguments string `json:"arguments,omitempty"`
 	} `json:"function"`
-}
-
-// ChatRequest is the request body for the OpenAI chat completions API.
-type ChatRequest struct {
-	Model    string    `json:"model"`
-	Messages []Message `json:"messages"`
-	Tools    []ToolDef `json:"tools,omitempty"`
-	Stream   bool      `json:"stream,omitempty"`
-	// MaxTokens limits the response length.
-	MaxTokens int `json:"max_tokens,omitempty"`
-	// StreamOptions is used to get usage in stream mode.
-	StreamOptions *StreamOptions `json:"stream_options,omitempty"`
-}
-
-// StreamOptions configures streaming behavior.
-type StreamOptions struct {
-	IncludeUsage bool `json:"include_usage"`
-}
-
-// StreamChunk is a single SSE chunk from the streaming API.
-type StreamChunk struct {
-	ID      string         `json:"id"`
-	Choices []StreamChoice `json:"choices"`
-	Usage   *Usage         `json:"usage,omitempty"`
-}
-
-// StreamChoice represents a single choice in a streaming chunk.
-type StreamChoice struct {
-	Index        int          `json:"index"`
-	Delta        StreamDelta  `json:"delta"`
-	FinishReason *string      `json:"finish_reason"`
-}
-
-// StreamDelta contains the incremental data in a streaming chunk.
-type StreamDelta struct {
-	Role      string          `json:"role,omitempty"`
-	Content   *string         `json:"content,omitempty"`
-	ToolCalls []ToolCallDelta `json:"tool_calls,omitempty"`
 }

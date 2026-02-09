@@ -17,6 +17,46 @@ type Config struct {
 	ContextWindow int
 }
 
+// KnownModel represents a curated model option.
+type KnownModel struct {
+	Provider string
+	Model    string
+	Label    string
+}
+
+// KnownModels returns the list of curated models for the /model menu.
+func KnownModels() []KnownModel {
+	return []KnownModel{
+		{"openai", "gpt-4o-mini", "GPT-4o Mini (OpenAI)"},
+		{"openai", "gpt-5.1-codex-mini", "GPT-5.1 Codex Mini (OpenAI)"},
+		{"openai", "gpt-5.2-codex", "GPT-5.2 Codex (OpenAI)"},
+		{"anthropic", "claude-opus-4-6", "Claude Opus 4.6 (Anthropic)"},
+		{"anthropic", "claude-sonnet-4-5-20250929", "Claude Sonnet 4.5 (Anthropic)"},
+		{"anthropic", "claude-haiku-4-5-20251001", "Claude Haiku 4.5 (Anthropic)"},
+	}
+}
+
+// ProviderDefaults returns the base URL, max tokens, and context window for a provider.
+func ProviderDefaults(provider string) (baseURL string, maxTokens int, contextWindow int) {
+	switch provider {
+	case "anthropic":
+		return "https://api.anthropic.com/v1", 16384, 200000
+	default:
+		return "https://api.openai.com/v1", 16384, 128000
+	}
+}
+
+// APIKeyForProvider returns the API key for the given provider from env/credentials.
+// Returns empty string if not found.
+func APIKeyForProvider(provider string) string {
+	switch provider {
+	case "anthropic":
+		return os.Getenv("ANTHROPIC_API_KEY")
+	default:
+		return os.Getenv("OPENAI_API_KEY")
+	}
+}
+
 // ConfigDir returns the XDG-compliant config directory for Pilot.
 // Uses $XDG_CONFIG_HOME/pilot if set, otherwise ~/.config/pilot.
 func ConfigDir() (string, error) {
@@ -58,7 +98,7 @@ func Load(provider string) (*Config, error) {
 			Provider:      "anthropic",
 			APIKey:        apiKey,
 			Model:         "claude-sonnet-4-5-20250929",
-			MaxTokens:     4096,
+			MaxTokens:     16384,
 			BaseURL:       "https://api.anthropic.com/v1",
 			ContextWindow: 200000,
 		}
@@ -75,7 +115,7 @@ func Load(provider string) (*Config, error) {
 			Provider:      "openai",
 			APIKey:        apiKey,
 			Model:         "gpt-4o-mini",
-			MaxTokens:     4096,
+			MaxTokens:     16384,
 			BaseURL:       "https://api.openai.com/v1",
 			ContextWindow: 128000,
 		}
