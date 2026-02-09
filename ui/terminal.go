@@ -1,9 +1,11 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 )
 
 // ANSI color codes
@@ -185,4 +187,98 @@ func truncate(s string, max int) string {
 		return s
 	}
 	return s[:max-3] + "..."
+}
+
+// InterruptListener watches for Esc key presses during agent execution
+// and cancels a derived context when detected.
+type InterruptListener struct {
+	rawMode *RawMode
+	cancel  context.CancelFunc
+	stopCh  chan struct{} // closed to signal readLoop to exit
+	done    chan struct{} // closed when readLoop has exited
+	mu      sync.Mutex
+	active  bool
+}
+
+// StartEscapeListener creates a derived context that cancels when Esc is pressed.
+// Returns the derived context, the listener (for Pause/Resume/Stop), and any error.
+// If raw mode cannot be initialized (e.g., no TTY), returns the original context
+// and a nil listener.
+func (t *Terminal) StartEscapeListener(parent context.Context) (context.Context, *InterruptListener, error) {
+	rm, err := NewRawMode()
+	if err != nil {
+		return parent, nil, err
+	}
+
+	if err := rm.Enable(); err != nil {
+		return parent, nil, err
+	}
+
+	ctx, cancel := context.WithCancel(parent)
+	il := &InterruptListener{
+		rawMode: rm,
+		cancel:  cancel,
+		stopCh:  make(chan struct{}),
+		done:    make(chan struct{}),
+		active:  true,
+	}
+
+	go il.readLoop()
+
+	return ctx, il, nil
+}
+
+func (il *InterruptListener) readLoop() {
+	defer close(il.done)
+	for {
+		ch, err := il.rawMode.ReadKeyContext(il.stopCh)
+		if err != nil {
+			return // ErrStopped or read error
+		}
+
+		il.mu.Lock()
+		active := il.active
+		il.mu.Unlock()
+
+		if !active {
+			continue
+		}
+
+		if ch == 0x1B {
+			il.cancel()
+			return
+		}
+	}
+}
+
+// Stop shuts down the listener and restores terminal mode.
+func (il *InterruptListener) Stop() {
+	il.mu.Lock()
+	il.active = false
+	il.mu.Unlock()
+
+	// Restore terminal mode first so Ctrl+C works even if goroutine is slow to exit
+	il.rawMode.Disable()
+
+	// Signal the readLoop to stop, then wait for it
+	close(il.stopCh)
+	<-il.done
+
+	il.cancel()
+}
+
+// Pause temporarily disables raw mode (e.g., for confirmation prompts).
+func (il *InterruptListener) Pause() {
+	il.mu.Lock()
+	il.active = false
+	il.mu.Unlock()
+	il.rawMode.Disable()
+}
+
+// Resume re-enables raw mode after a Pause.
+func (il *InterruptListener) Resume() {
+	il.rawMode.Enable()
+	il.mu.Lock()
+	il.active = true
+	il.mu.Unlock()
 }

@@ -50,13 +50,27 @@ func (a *Agent) SetClient(client llm.LLMClient, contextWindow int) {
 func (a *Agent) Run(ctx context.Context, userMessage string, term *ui.Terminal) error {
 	a.messages = append(a.messages, llm.TextMessage("user", userMessage))
 
+	// Start escape listener for Esc key cancellation
+	opCtx, listener, escErr := term.StartEscapeListener(ctx)
+	if escErr != nil {
+		// No TTY or raw mode unavailable — fall back to parent context
+		opCtx = ctx
+	}
+	if listener != nil {
+		defer listener.Stop()
+	}
+
 	for iteration := 0; iteration < MaxIterationsPerTurn; iteration++ {
-		a.compactIfNeeded(ctx, term)
+		a.compactIfNeeded(opCtx, term)
 		term.PrintSpinner()
 
-		events, err := a.client.StreamMessage(ctx, a.messages, a.tools.Definitions())
+		events, err := a.client.StreamMessage(opCtx, a.messages, a.tools.Definitions())
 		if err != nil {
 			term.ClearSpinner()
+			if opCtx.Err() != nil {
+				fmt.Println()
+				return context.Canceled
+			}
 			return fmt.Errorf("LLM request failed: %w", err)
 		}
 
@@ -66,6 +80,10 @@ func (a *Agent) Run(ctx context.Context, userMessage string, term *ui.Terminal) 
 			term.PrintAssistant(text)
 		})
 		if err != nil {
+			if opCtx.Err() != nil {
+				fmt.Println()
+				return context.Canceled
+			}
 			return fmt.Errorf("stream error: %w", err)
 		}
 
@@ -95,7 +113,17 @@ func (a *Agent) Run(ctx context.Context, userMessage string, term *ui.Terminal) 
 			fmt.Println()
 		}
 
-		results := a.executeToolCalls(ctx, resp.Message.ToolCalls, term)
+		results := a.executeToolCalls(opCtx, resp.Message.ToolCalls, term, listener)
+		if opCtx.Err() != nil {
+			// Cancelled during tool execution — still record any results we got
+			for _, r := range results {
+				if r.output != "" {
+					a.messages = append(a.messages, llm.ToolResultMessage(r.id, r.output))
+				}
+			}
+			fmt.Println()
+			return context.Canceled
+		}
 		for _, r := range results {
 			a.messages = append(a.messages, llm.ToolResultMessage(r.id, r.output))
 		}
@@ -110,7 +138,7 @@ type toolResult struct {
 }
 
 // executeToolCalls runs tool calls, parallelizing read-only ones.
-func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall, term *ui.Terminal) []toolResult {
+func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall, term *ui.Terminal, listener *ui.InterruptListener) []toolResult {
 	results := make([]toolResult, len(calls))
 
 	// Check if all calls are read-only
@@ -170,7 +198,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall, term
 
 			if toolErr != nil {
 				if confirm, ok := toolErr.(*tools.NeedsConfirmation); ok {
-					output = a.handleConfirmation(confirm, term)
+					output = a.handleConfirmation(confirm, term, listener)
 				} else {
 					output = fmt.Sprintf("Error: %s", toolErr)
 				}
@@ -184,7 +212,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall, term
 	return results
 }
 
-func (a *Agent) handleConfirmation(confirm *tools.NeedsConfirmation, term *ui.Terminal) string {
+func (a *Agent) handleConfirmation(confirm *tools.NeedsConfirmation, term *ui.Terminal, listener *ui.InterruptListener) string {
 	switch confirm.Tool {
 	case "write":
 		term.PrintFilePreview(confirm.Path, confirm.Preview)
@@ -195,7 +223,19 @@ func (a *Agent) handleConfirmation(confirm *tools.NeedsConfirmation, term *ui.Te
 		fmt.Println()
 	}
 
-	if !term.ConfirmAction(fmt.Sprintf("Apply %s to %s?", confirm.Tool, confirm.Path)) {
+	// Pause raw mode so fmt.Scanln works for y/n input
+	if listener != nil {
+		listener.Pause()
+	}
+
+	approved := term.ConfirmAction(fmt.Sprintf("Apply %s to %s?", confirm.Tool, confirm.Path))
+
+	// Resume raw mode after confirmation
+	if listener != nil {
+		listener.Resume()
+	}
+
+	if !approved {
 		return "User denied the operation."
 	}
 
