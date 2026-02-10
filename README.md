@@ -4,6 +4,10 @@ A terminal-based AI coding agent built from scratch in Go. Pilot takes natural l
 
 No agent frameworks. No LangChain. Zero external dependencies. Just an LLM API client, a hand-rolled tool orchestration loop, and the Go standard library.
 
+## Demo
+
+https://github.com/user-attachments/assets/b86646f0-b549-4ad4-8fda-19adbbfaca70
+
 ## Architecture
 
 ```
