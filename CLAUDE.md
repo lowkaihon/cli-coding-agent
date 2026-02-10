@@ -28,7 +28,7 @@ cmd/pilot/main.go (REPL + slash commands + signal handling)
       → llm.AccumulateStream()         — collects events, calls onText for live display
       → tools.Registry.Execute()       — dispatches tool calls
       → loop back until stop/no tools/50 iterations
-  → agent.SaveSession()                — auto-save conversation to .pilot/
+  → agent.SaveSession()                — auto-save conversation to ~/.pilot/
 ```
 
 **Package dependencies** (strict, no cycles):
@@ -66,7 +66,7 @@ cmd/pilot/main.go (REPL + slash commands + signal handling)
 
 **Persistent memory** — `systemPrompt()` in `agent/agent.go` reads `MEMORY.md` from the working directory and appends its contents to the system prompt. No dedicated "remember" tool; the LLM uses `edit` on MEMORY.md directly.
 
-**Session persistence & checkpoints** — Sessions auto-save to `.pilot/sessions/` as JSON (`agent/session.go`). `CreateCheckpoint()` snapshots conversation + modified files before each turn (`agent/checkpoint.go`). `captureFileBeforeModification()` populates `fileOriginals` map before write/edit execution. `/rewind` offers: restore code+conversation, conversation only, code only, or summarize-from via `SummarizeFrom()`.
+**Session persistence & checkpoints** — Sessions auto-save to `~/.pilot/projects/<hash>/sessions/` as JSON (`agent/session.go`), where `<hash>` is a SHA256 prefix of the project's absolute path. `CreateCheckpoint()` snapshots conversation + modified files before each turn (`agent/checkpoint.go`). `captureFileBeforeModification()` populates `fileOriginals` map before write/edit execution. `/rewind` offers: restore code+conversation, conversation only, code only, or summarize-from via `SummarizeFrom()`.
 
 ## Context Management
 

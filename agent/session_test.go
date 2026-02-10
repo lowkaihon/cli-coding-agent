@@ -42,7 +42,8 @@ func TestSaveSession_EmptyNoOp(t *testing.T) {
 	}
 
 	// Sessions dir should not exist
-	if _, err := os.Stat(filepath.Join(dir, ".pilot", "sessions")); !os.IsNotExist(err) {
+	sessDir, _ := globalSessionsDir(dir)
+	if _, err := os.Stat(sessDir); !os.IsNotExist(err) {
 		t.Error("expected sessions dir to not exist for empty session")
 	}
 }
@@ -63,7 +64,8 @@ func TestSaveAndResumeSession(t *testing.T) {
 	}
 
 	// Verify file exists
-	sessionPath := filepath.Join(dir, ".pilot", "sessions", ag.sessionID+".json")
+	sessDir, _ := globalSessionsDir(dir)
+	sessionPath := filepath.Join(sessDir, ag.sessionID+".json")
 	data, err := os.ReadFile(sessionPath)
 	if err != nil {
 		t.Fatalf("session file not found: %v", err)
@@ -105,7 +107,7 @@ func TestSaveAndResumeSession(t *testing.T) {
 
 func TestListSessions_Ordering(t *testing.T) {
 	dir := t.TempDir()
-	sessDir := filepath.Join(dir, ".pilot", "sessions")
+	sessDir, _ := globalSessionsDir(dir)
 	os.MkdirAll(sessDir, 0755)
 
 	// Create two session files with different timestamps
@@ -154,7 +156,7 @@ func TestListSessions_Ordering(t *testing.T) {
 
 func TestListSessions_MaxLimit(t *testing.T) {
 	dir := t.TempDir()
-	sessDir := filepath.Join(dir, ".pilot", "sessions")
+	sessDir, _ := globalSessionsDir(dir)
 	os.MkdirAll(sessDir, 0755)
 
 	now := time.Now()

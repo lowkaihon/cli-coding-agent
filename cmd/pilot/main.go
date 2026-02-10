@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime/debug"
 	"strconv"
 	"strings"
@@ -66,6 +67,14 @@ func main() {
 	term := ui.NewTerminal()
 	term.PrintBanner(currentModel, workDir, getVersion())
 
+	// Check for old per-project session directory and show migration notice
+	oldSessionsDir := filepath.Join(workDir, ".pilot", "sessions")
+	if info, err := os.Stat(oldSessionsDir); err == nil && info.IsDir() {
+		term.PrintWarning("Session storage has moved to ~/.pilot/projects/<hash>/sessions/")
+		term.PrintWarning(fmt.Sprintf("Old sessions at %s can be safely deleted.", oldSessionsDir))
+		fmt.Println()
+	}
+
 	reader := bufio.NewReader(os.Stdin)
 
 	// Track whether agent is currently running, protected by mutex
@@ -121,6 +130,9 @@ func main() {
 		switch input {
 		case "/help":
 			term.PrintHelp()
+			if sessDir, err := agent.GlobalSessionsDir(workDir); err == nil {
+				fmt.Printf("  Sessions stored at: %s\n\n", sessDir)
+			}
 		case "/model":
 			handleModelSwitch(reader, term, ag, &currentModel, &currentProvider)
 		case "/quit":

@@ -34,8 +34,8 @@ func generateSessionID() string {
 	return time.Now().Format("20060102-150405") + "-" + hex.EncodeToString(b)
 }
 
-func sessionsDir(workDir string) string {
-	return filepath.Join(workDir, ".pilot", "sessions")
+func sessionsDir(workDir string) (string, error) {
+	return globalSessionsDir(workDir)
 }
 
 // SaveSession persists the current conversation (excluding system prompt) to disk.
@@ -46,7 +46,10 @@ func (a *Agent) SaveSession() error {
 		return nil
 	}
 
-	dir := sessionsDir(a.workDir)
+	dir, err := sessionsDir(a.workDir)
+	if err != nil {
+		return fmt.Errorf("resolve sessions dir: %w", err)
+	}
 	if err := os.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("create sessions dir: %w", err)
 	}
@@ -109,7 +112,11 @@ func atomicWriteSession(path string, data []byte) error {
 // ResumeSession loads a saved session and rebuilds the message history
 // with a fresh system prompt.
 func (a *Agent) ResumeSession(sessionID string) error {
-	path := filepath.Join(sessionsDir(a.workDir), sessionID+".json")
+	dir, err := sessionsDir(a.workDir)
+	if err != nil {
+		return fmt.Errorf("resolve sessions dir: %w", err)
+	}
+	path := filepath.Join(dir, sessionID+".json")
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return fmt.Errorf("read session: %w", err)
@@ -133,7 +140,10 @@ func (a *Agent) ResumeSession(sessionID string) error {
 // ListSessions reads all session files from the sessions directory,
 // returning up to max entries sorted by UpdatedAt descending.
 func ListSessions(workDir string, max int) ([]SessionMeta, error) {
-	dir := sessionsDir(workDir)
+	dir, err := sessionsDir(workDir)
+	if err != nil {
+		return nil, fmt.Errorf("resolve sessions dir: %w", err)
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
