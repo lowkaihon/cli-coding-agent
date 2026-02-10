@@ -8,6 +8,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/lowkaihon/cli-coding-agent/llm"
 )
 
 // ANSI color codes
@@ -179,6 +181,7 @@ func (t *Terminal) PrintModelMenu(options []ModelOption) {
 		fmt.Printf("%s%s %s\n", marker, t.c(Cyan, fmt.Sprintf("[%d]", i+1)), opt.Label)
 	}
 	fmt.Printf("  %s %s\n", t.c(Cyan, "[0]"), "Enter a custom model name")
+	fmt.Println(t.c(Gray, "  Ctrl+C to cancel"))
 	fmt.Println()
 }
 
@@ -342,6 +345,7 @@ func (t *Terminal) PrintSessionList(items []SessionListItem) {
 			t.c(Gray, fmt.Sprintf("(%d messages)", item.MsgCount)),
 		)
 	}
+	fmt.Println(t.c(Gray, "  Ctrl+C to cancel"))
 	fmt.Println()
 }
 
@@ -390,6 +394,7 @@ func (t *Terminal) PrintCheckpointList(items []CheckpointListItem) {
 			t.c(White, fmt.Sprintf("%q", preview)),
 		)
 	}
+	fmt.Println(t.c(Gray, "  Ctrl+C to cancel"))
 	fmt.Println()
 }
 
@@ -408,6 +413,40 @@ func (t *Terminal) PrintRewindActions() {
 func (t *Terminal) PrintProviderPrompt(current string) {
 	fmt.Printf("  %s openai  %s anthropic  (current: %s)\n",
 		t.c(Cyan, "[1]"), t.c(Cyan, "[2]"), current)
+}
+
+// PrintConversationHistory replays a stored conversation to the terminal.
+func (t *Terminal) PrintConversationHistory(messages []llm.Message) {
+	fmt.Println(t.c(Gray, "--- Conversation history ---"))
+	fmt.Println()
+	for _, msg := range messages {
+		switch msg.Role {
+		case "system":
+			continue
+		case "user":
+			if msg.ToolCallID != "" {
+				continue // skip tool-result-in-user-message (Anthropic format)
+			}
+			if msg.Content != nil && *msg.Content != "" {
+				fmt.Println(t.c(Bold+Blue, "> ") + *msg.Content)
+				fmt.Println()
+			}
+		case "assistant":
+			if msg.Content != nil && *msg.Content != "" {
+				t.PrintAssistant(*msg.Content)
+				t.PrintAssistantDone()
+			}
+			for _, tc := range msg.ToolCalls {
+				t.PrintToolCall(tc.Function.Name, tc.Function.Arguments)
+			}
+		case "tool":
+			if msg.Content != nil {
+				t.PrintToolResult(*msg.Content)
+			}
+		}
+	}
+	fmt.Println(t.c(Gray, "--- End of history ---"))
+	fmt.Println()
 }
 
 // PrintRewindComplete prints a confirmation message after a rewind operation.

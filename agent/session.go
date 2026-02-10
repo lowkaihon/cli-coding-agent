@@ -134,6 +134,7 @@ func (a *Agent) ResumeSession(sessionID string) error {
 	a.sessionID = sf.Meta.ID
 	a.sessionCreated = sf.Meta.CreatedAt
 	a.lastTokensUsed = 0
+	a.rebuildCheckpoints()
 	return nil
 }
 

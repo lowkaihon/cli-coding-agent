@@ -87,6 +87,28 @@ func (a *Agent) Checkpoints() []CheckpointItem {
 	return items
 }
 
+// rebuildCheckpoints scans the message history and creates checkpoint entries
+// for each user turn. Used after session resume to restore rewind capability.
+// File snapshots are not available, so code rewind will be a no-op.
+func (a *Agent) rebuildCheckpoints() {
+	a.checkpoints = nil
+	for i, msg := range a.messages {
+		if msg.Role != "user" || msg.ToolCallID != "" {
+			continue
+		}
+		preview := msg.ContentString()
+		if len(preview) > 100 {
+			preview = preview[:100]
+		}
+		a.checkpoints = append(a.checkpoints, Checkpoint{
+			Turn:      len(a.checkpoints) + 1,
+			Timestamp: time.Now(),
+			Preview:   preview,
+			MsgIndex:  i,
+		})
+	}
+}
+
 // RewindConversation truncates messages and checkpoints to the given turn.
 func (a *Agent) RewindConversation(turn int) {
 	if turn < 1 || turn > len(a.checkpoints) {

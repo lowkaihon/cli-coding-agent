@@ -45,7 +45,7 @@ User input
 | `llm` | LLM client interface, OpenAI + Anthropic, streaming, retry | — |
 | `tools` | Tool registry, 8 tool implementations, path security | llm (types only) |
 | `config` | API key management, .env loading, provider defaults | — |
-| `ui` | Terminal output, colors, diffs, raw mode (cross-platform) | — |
+| `ui` | Terminal output, colors, diffs, raw mode (cross-platform) | llm (types only) |
 
 ## Engineering Highlights
 

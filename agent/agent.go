@@ -302,6 +302,7 @@ func (a *Agent) Compact(ctx context.Context, term *ui.Terminal) error {
 // Clear resets the conversation history to just the system prompt.
 func (a *Agent) Clear(term *ui.Terminal) {
 	a.messages = []llm.Message{a.messages[0]}
+	a.checkpoints = nil
 	a.lastTokensUsed = 0
 	term.PrintWarning("Conversation cleared.")
 }

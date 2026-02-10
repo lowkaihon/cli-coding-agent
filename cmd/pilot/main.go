@@ -100,8 +100,7 @@ func main() {
 				fmt.Println("\nExiting.")
 				os.Exit(0)
 			} else {
-				// Not running — print hint
-				fmt.Println("\n(Press Ctrl+C again to exit)")
+				fmt.Println()
 				term.PrintPrompt()
 			}
 		}
@@ -109,7 +108,8 @@ func main() {
 
 	running := true
 	for running {
-		input, err := term.ReadLine(term.Prompt())
+		fmt.Print(term.Prompt())
+		input, err := readInput(reader, term)
 		if err != nil {
 			// EOF (Ctrl+D) or error
 			break
@@ -189,6 +189,27 @@ func newClient(provider, apiKey, model string, maxTokens int, baseURL string) ll
 	default:
 		return llm.NewOpenAIResponsesClient(apiKey, model, maxTokens, baseURL)
 	}
+}
+
+// readInput reads one line from the reader, then collects any additional
+// pasted lines that arrived in the same paste event. This handles multi-line
+// paste by checking both the bufio buffer and the OS stdin buffer.
+func readInput(reader *bufio.Reader, term *ui.Terminal) (string, error) {
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	lines := []string{strings.TrimRight(line, "\r\n")}
+
+	for reader.Buffered() > 0 || ui.StdinHasData() {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			break
+		}
+		lines = append(lines, strings.TrimRight(line, "\r\n"))
+	}
+
+	return strings.TrimSpace(strings.Join(lines, "\n")), nil
 }
 
 func handleModelSwitch(reader *bufio.Reader, term *ui.Terminal, ag *agent.Agent, currentModel, currentProvider *string) {
@@ -324,6 +345,7 @@ func handleResume(reader *bufio.Reader, term *ui.Terminal, ag *agent.Agent, work
 		return
 	}
 
+	term.PrintConversationHistory(ag.MessageHistory())
 	term.PrintSessionResumed(selected.MsgCount, selected.Preview)
 }
 
@@ -376,9 +398,11 @@ func handleRewind(reader *bufio.Reader, term *ui.Terminal, ag *agent.Agent, ctx 
 			term.PrintError(err)
 			return
 		}
+		term.PrintConversationHistory(ag.MessageHistory())
 		term.PrintRewindComplete("restored code and conversation")
 	case "2":
 		ag.RewindConversation(n)
+		term.PrintConversationHistory(ag.MessageHistory())
 		term.PrintRewindComplete("restored conversation only")
 	case "3":
 		if err := ag.RewindCode(n); err != nil {
@@ -391,6 +415,7 @@ func handleRewind(reader *bufio.Reader, term *ui.Terminal, ag *agent.Agent, ctx 
 			term.PrintError(err)
 			return
 		}
+		term.PrintConversationHistory(ag.MessageHistory())
 		term.PrintRewindComplete("summarized from checkpoint")
 	case "5":
 		// Never mind
