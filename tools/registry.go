@@ -75,7 +75,8 @@ func (r *Registry) Definitions() []llm.ToolDef {
 }
 
 func (r *Registry) registerBuiltins() {
-	r.register("glob", "Find files matching a glob pattern (supports ** for recursive matching). Returns file paths relative to working directory.",
+	r.register("glob",
+		`Fast file pattern matching tool. Supports glob patterns like "**/*.go" or "src/**/*.ts". Returns matching file paths relative to working directory, sorted by modification time. Use this tool when you need to find files by name patterns. Prefer this over bash find or ls commands.`,
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -89,7 +90,8 @@ func (r *Registry) registerBuiltins() {
 		r.globTool,
 	)
 
-	r.register("grep", "Search file contents using RE2 regex. Returns matching lines with file paths and line numbers.",
+	r.register("grep",
+		`Search file contents using RE2 regex. Returns matching lines with file paths and line numbers. ALWAYS use this tool for content search — never use bash grep or rg. Supports RE2 regex syntax (e.g., "log.*Error", "func\\s+\\w+"). Note: RE2 does not support lookaheads or lookbehinds. Literal braces need escaping (use "interface\\{\\}" to find "interface{}" in Go code). Filter files with the include parameter using glob patterns (e.g., "*.go", "*.{ts,tsx}").`,
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -111,7 +113,7 @@ func (r *Registry) registerBuiltins() {
 		r.grepTool,
 	)
 
-	r.register("ls", "List directory contents with file/directory indicators and sizes.",
+	r.register("ls", "List directory contents with file/directory indicators and sizes. Can only list directories, not files. Use glob to find files by pattern.",
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -124,7 +126,8 @@ func (r *Registry) registerBuiltins() {
 		r.lsTool,
 	)
 
-	r.register("read", "Read file contents with line numbers. Supports optional line range to read specific sections.",
+	r.register("read",
+		`Read file contents with line numbers (cat -n format, 1-indexed). Use start_line/end_line for large files to read specific sections. Can only read files, not directories — use ls for directories. Read multiple files in parallel when you need to understand several files at once. Always use this tool instead of bash cat, head, or tail.`,
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -146,7 +149,8 @@ func (r *Registry) registerBuiltins() {
 		r.readTool,
 	)
 
-	r.register("write", "Create or overwrite a file with the given content. Creates parent directories if needed.",
+	r.register("write",
+		`Create or overwrite a file with the given content. Creates parent directories if needed. User confirmation required. ALWAYS prefer editing existing files over writing new ones — use the edit tool to modify existing files. Never proactively create documentation files (*.md) or README files unless explicitly requested.`,
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -164,7 +168,8 @@ func (r *Registry) registerBuiltins() {
 		r.writeTool,
 	)
 
-	r.register("edit", "Edit a file by replacing an exact string match. The old_str must appear exactly once in the file.",
+	r.register("edit",
+		`Edit a file by replacing an exact string match. The old_str must appear exactly once in the file. When editing text from read tool output, preserve the exact indentation (tabs/spaces) as shown in the file content — do not include line numbers from the read output. If the edit fails because old_str is not unique, include more surrounding context lines to make it unique. Always prefer editing existing files over creating new ones.`,
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -186,7 +191,14 @@ func (r *Registry) registerBuiltins() {
 		r.editTool,
 	)
 
-	r.register("bash", "Execute a shell command. Runs in the working directory. Use for builds, tests, git, etc. All commands require user confirmation.",
+	r.register("bash",
+		`Execute a shell command in the working directory. Use for terminal operations like git, builds, tests, and other system commands. Do NOT use bash for file operations (reading, writing, editing, searching) — use the dedicated tools instead. Specifically, do not use cat, head, tail, sed, awk, find, grep, or echo when a dedicated tool exists.
+
+Before executing commands that create new directories or files, first verify the parent directory exists using ls. Always quote file paths containing spaces. Use && to chain sequential dependent commands. Prefer absolute paths and avoid cd when possible.
+
+All commands require user confirmation. Default timeout: 30s, max: 120s. Output is truncated at 10,000 characters.
+
+Git safety: Never force-push, reset --hard, use --no-verify, or amend unless the user explicitly asks. Never use interactive flags (-i). Prefer staging specific files over "git add -A". Only commit when explicitly requested by the user.`,
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {

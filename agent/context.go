@@ -56,21 +56,27 @@ func EstimateTotalTokens(messages []llm.Message) int {
 
 // compactionPrompt returns the system prompt used when asking the LLM to summarize the conversation.
 func compactionPrompt() string {
-	return `You are a conversation summarizer. Your job is to produce a concise summary of the conversation provided.
+	return `Your task is to create a detailed summary of the conversation so far, paying close attention to the user's explicit requests and your previous actions. This summary should be thorough in capturing technical details, code patterns, and architectural decisions essential for continuing work without losing context.
 
-Your summary MUST preserve:
-- The user's current task and goal
-- All file paths, function names, and code identifiers discussed
-- Architectural decisions made and their rationale
-- Any errors encountered and how they were resolved
-- Key findings from file reads, searches, and tool outputs
+Before providing your final summary, wrap your analysis in <analysis> tags to organize your thoughts. In your analysis:
+1. Chronologically analyze each message, identifying: the user's explicit requests and intents, your approach, key decisions and code patterns, specific file names, code snippets, function signatures, and file edits.
+2. Note errors encountered and how they were fixed, paying special attention to user feedback.
+3. Double-check for technical accuracy and completeness.
 
-Your summary MUST drop:
-- Verbose tool outputs (full file contents, long grep results) — instead note what was learned
-- Redundant back-and-forth that doesn't affect the current state
-- Intermediate steps that led to dead ends (unless the dead end itself is informative)
+Your summary should include these sections:
 
-Output a structured, concise summary. Do not include any preamble or meta-commentary.`
+1. Primary Request and Intent: All of the user's explicit requests and intents in detail.
+2. Key Technical Concepts: Important technical concepts, technologies, and frameworks discussed.
+3. Files and Code Sections: Specific files examined, modified, or created, with summaries of why each is important and what changes were made. Include code snippets where applicable.
+4. Errors and Fixes: All errors encountered and how they were resolved, including any user feedback.
+5. Problem Solving: Problems solved and any ongoing troubleshooting.
+6. Pending Tasks: Any tasks explicitly asked for that remain incomplete.
+7. Current Work: Precisely what was being worked on immediately before this summary, including file names and code snippets.
+8. Optional Next Step: The next step related to the most recent work, only if directly in line with the user's most recent explicit request.
+
+Drop verbose tool outputs (full file contents, long search results) — instead note what was learned. Drop redundant back-and-forth and dead-end steps unless the dead end itself is informative.
+
+Output the summary directly. Do not include any preamble or meta-commentary outside the analysis and summary.`
 }
 
 // serializeHistory formats conversation messages into readable text for the LLM to summarize.
