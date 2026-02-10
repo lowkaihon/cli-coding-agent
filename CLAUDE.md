@@ -51,9 +51,13 @@ cmd/pilot/main.go (REPL + slash commands + signal handling)
 
 **`tools.AtomicWrite()`** — Shared by write and edit tools. Writes to a temp file in the same directory, then `os.Rename` for atomicity.
 
-**Tool registry is an ordered slice** — Not a map. Registration order (glob → grep → ls → read → write → edit → bash) is deterministic, which affects LLM behavior.
+**Tool registry is an ordered slice** — Not a map. Registration order (glob → grep → ls → read → write → edit → bash → explore) is deterministic, which affects LLM behavior.
+
+**Explore sub-agent** — The `explore` tool spawns a child agent with a read-only tool registry (glob, grep, ls, read only). It uses non-streaming `SendMessage()` to avoid terminal output conflicts, executes up to 30 iterations, and returns a summary. This avoids cluttering the main agent's context with exploratory searches. The callback is injected via `SetExploreFunc()` to break circular dependencies between agent and tools packages.
 
 **Streaming accumulates tool calls by index** — `AccumulateStream()` maps tool call deltas by their `Index` field since multiple tool calls arrive interleaved across SSE chunks. The `onText` callback enables real-time display during accumulation.
+
+**Retry logic is centralized** — `llm/retry.go` provides `doWithRetry()` with exponential backoff (2s base, 60s max) and jitter. Both Anthropic and OpenAI clients use this shared implementation for rate limit (429) and server error (5xx) handling.
 
 ## Context Management
 
@@ -81,6 +85,10 @@ type LLMClient interface {
 }
 ```
 
+Implementations:
+- **OpenAI**: Uses Responses API (GPT-5.x models like `gpt-4o-mini`). Chat Completions API has been removed.
+- **Anthropic**: Uses Messages API (Claude models like `claude-sonnet-4-5-20250929`).
+
 Key differences handled internally:
 - **Message format**: OpenAI uses `content` string; Anthropic uses content block arrays
 - **Tool calls**: OpenAI has separate `tool_calls` field; Anthropic uses `tool_use` content blocks
@@ -90,9 +98,9 @@ Key differences handled internally:
 
 ## Concurrent Tool Execution
 
-When the LLM returns multiple tool calls, Pilot checks if all are read-only (glob, grep, ls, read). If so, they execute concurrently via goroutines with `sync.WaitGroup`. Results are collected into a pre-allocated slice indexed by position — no mutex needed.
+When the LLM returns multiple tool calls, Pilot checks if all are read-only (glob, grep, ls, read, explore). If so, they execute concurrently via goroutines with `sync.WaitGroup`. Results are collected into a pre-allocated slice indexed by position — no mutex needed.
 
-Write tools (write, edit, bash) execute sequentially because they return `NeedsConfirmation` errors requiring interactive user input.
+Write tools (write, edit, bash) execute sequentially because they return `NeedsConfirmation` errors requiring interactive user input. The `explore` sub-agent also runs read-only tools concurrently internally.
 
 ## Security Model
 

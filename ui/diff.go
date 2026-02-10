@@ -71,15 +71,8 @@ func (t *Terminal) PrintDiff(path, oldContent, newContent string) {
 func (t *Terminal) PrintFilePreview(path, content string) {
 	fmt.Println(t.c(Bold+Green, fmt.Sprintf("New file: %s", path)))
 	lines := strings.Split(content, "\n")
-	max := 20
-	if len(lines) < max {
-		max = len(lines)
-	}
-	for i, line := range lines[:max] {
+	for i, line := range lines {
 		fmt.Println(t.c(Gray, fmt.Sprintf("  %3d │ ", i+1)) + t.c(Green, line))
-	}
-	if len(lines) > max {
-		fmt.Println(t.c(Gray, fmt.Sprintf("  ... (%d more lines)", len(lines)-max)))
 	}
 }
 

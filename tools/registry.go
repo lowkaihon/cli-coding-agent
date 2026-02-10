@@ -19,8 +19,9 @@ type toolEntry struct {
 
 // Registry holds all available tools and dispatches execution.
 type Registry struct {
-	tools   []toolEntry
-	workDir string
+	tools       []toolEntry
+	workDir     string
+	exploreFunc ExploreFunc
 }
 
 // NewRegistry creates a registry and registers all built-in tools.
@@ -58,7 +59,7 @@ func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessa
 // IsReadOnly returns true for tools that don't modify the filesystem.
 func (r *Registry) IsReadOnly(name string) bool {
 	switch name {
-	case "glob", "grep", "ls", "read":
+	case "glob", "grep", "ls", "read", "explore":
 		return true
 	default:
 		return false
@@ -214,6 +215,21 @@ Git safety: Never force-push, reset --hard, use --no-verify, or amend unless the
 			"required": ["command"]
 		}`),
 		r.bashTool,
+	)
+
+	r.register("explore",
+		`Explore the codebase to answer broad questions by delegating to a focused sub-agent. The sub-agent has its own context and read-only tools (glob, grep, ls, read). Use this for questions like "how does authentication work?", "what's the project structure?", or "find all API endpoints". Do NOT use this for direct tasks like editing files or running commands — only for research and exploration.`,
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"task": {
+					"type": "string",
+					"description": "What to explore or research in the codebase"
+				}
+			},
+			"required": ["task"]
+		}`),
+		r.exploreTool,
 	)
 
 }

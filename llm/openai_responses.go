@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"math"
-	"math/rand"
 	"net/http"
 	"time"
 )
@@ -252,9 +250,26 @@ func (c *OpenAIResponsesClient) SendMessage(ctx context.Context, messages []Mess
 	}
 
 	var apiResp responsesResponse
-	err = c.doWithRetry(ctx, bodyBytes, &apiResp)
+	resp, err := doWithRetry(ctx, defaultRetryConfig(), func() (*http.Response, error) {
+		req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/responses", bytes.NewReader(bodyBytes))
+		if err != nil {
+			return nil, fmt.Errorf("create request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+		return c.http.Do(req)
+	})
 	if err != nil {
 		return nil, err
+	}
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read response: %w", err)
+	}
+	if err := json.Unmarshal(respBody, &apiResp); err != nil {
+		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 
 	if apiResp.Error != nil {
@@ -264,63 +279,3 @@ func (c *OpenAIResponsesClient) SendMessage(ctx context.Context, messages []Mess
 	return convertResponsesResponse(apiResp), nil
 }
 
-func (c *OpenAIResponsesClient) doWithRetry(ctx context.Context, body []byte, result *responsesResponse) error {
-	maxRetries := 3
-
-	for attempt := 0; attempt <= maxRetries; attempt++ {
-		if attempt > 0 {
-			backoff := time.Duration(math.Pow(2, float64(attempt-1))) * time.Second
-			jitter := time.Duration(rand.Intn(1000)) * time.Millisecond
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(backoff + jitter):
-			}
-		}
-
-		req, err := http.NewRequestWithContext(ctx, "POST", c.baseURL+"/responses", bytes.NewReader(body))
-		if err != nil {
-			return fmt.Errorf("create request: %w", err)
-		}
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+c.apiKey)
-
-		resp, err := c.http.Do(req)
-		if err != nil {
-			if attempt < maxRetries {
-				continue
-			}
-			return fmt.Errorf("http request: %w", err)
-		}
-
-		respBody, err := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if err != nil {
-			return fmt.Errorf("read response: %w", err)
-		}
-
-		switch {
-		case resp.StatusCode == 200:
-			if err := json.Unmarshal(respBody, result); err != nil {
-				return fmt.Errorf("unmarshal response: %w", err)
-			}
-			return nil
-		case resp.StatusCode == 401 || resp.StatusCode == 403:
-			return fmt.Errorf("authentication error (HTTP %d): %s", resp.StatusCode, string(respBody))
-		case resp.StatusCode == 429:
-			if attempt < maxRetries {
-				continue
-			}
-			return fmt.Errorf("rate limited (HTTP 429) after %d retries: %s", maxRetries, string(respBody))
-		case resp.StatusCode >= 500:
-			if attempt < maxRetries {
-				continue
-			}
-			return fmt.Errorf("server error (HTTP %d): %s", resp.StatusCode, string(respBody))
-		default:
-			return fmt.Errorf("API error (HTTP %d): %s", resp.StatusCode, string(respBody))
-		}
-	}
-
-	return fmt.Errorf("exhausted retries")
-}

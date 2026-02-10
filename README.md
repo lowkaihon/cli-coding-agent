@@ -8,7 +8,7 @@ No agent frameworks. No LangChain. Just an LLM API client and a hand-rolled tool
 
 - **Agentic tool-use loop** — the LLM decides which tools to call, executes them, and iterates until the task is done
 - **Streaming responses** — real-time token output via SSE, not batch responses
-- **7 built-in tools** — glob, grep, ls, read, write, edit, bash
+- **8 built-in tools** — glob, grep, ls, read, write, edit, bash, explore
 - **Multi-provider** — OpenAI and Anthropic support (`-provider anthropic`)
 - **User confirmation** — write/edit/bash operations require explicit `y/n` approval before executing
 - **Path sandboxing** — all file operations are validated to stay within the working directory
@@ -102,6 +102,7 @@ Once running, type natural language instructions at the `>` prompt:
 | `write` | Create/overwrite files (requires confirmation) |
 | `edit` | Replace exact string match in a file (requires confirmation) |
 | `bash` | Execute shell commands — builds, tests, git, etc. (requires confirmation, 30s timeout) |
+| `explore` | Spawn read-only sub-agent to research codebase (max 30 iterations) |
 
 ## Project Structure
 
@@ -117,14 +118,12 @@ cli-coding-agent/
 │   └── messages.go           # Message history access
 ├── llm/
 │   ├── types.go                 # Message, ToolCall, Response, StreamEvent types
-│   ├── openai_chat.go           # OpenAI Chat Completions client
-│   ├── openai_chat_types.go     # Chat Completions request/response types
-│   ├── openai_chat_stream.go    # Chat Completions SSE streaming
-│   ├── openai_responses.go      # OpenAI Responses client (GPT-5.x)
+│   ├── openai_responses.go      # OpenAI Responses client (GPT-4o, GPT-5.x)
 │   ├── openai_responses_stream.go # Responses SSE streaming
 │   ├── openai_responses_test.go # Responses client tests
 │   ├── anthropic.go             # Anthropic client
 │   ├── anthropic_stream.go      # Anthropic SSE streaming
+│   ├── retry.go                 # Shared retry logic with exponential backoff
 │   ├── stream.go                # Stream accumulator (shared)
 │   └── stream_test.go           # Streaming tests
 ├── tools/
@@ -137,7 +136,8 @@ cli-coding-agent/
 │   ├── read.go               # Read tool
 │   ├── write.go              # Write tool
 │   ├── edit.go               # Edit tool
-│   └── bash.go               # Bash tool
+│   ├── bash.go               # Bash tool
+│   └── explore.go            # Explore sub-agent tool
 ├── config/
 │   ├── config.go             # Config from env/.env/credentials
 │   └── config_test.go        # Config tests

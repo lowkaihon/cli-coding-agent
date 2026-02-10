@@ -29,6 +29,7 @@ type Agent struct {
 	sessionCreated time.Time
 	checkpoints    []Checkpoint              // ordered by turn
 	fileOriginals  map[string]*FileSnapshot  // pre-session state of each modified file
+	term           *ui.Terminal              // stored for sub-agent visibility
 }
 
 // New creates a new Agent with the system prompt initialized.
@@ -45,6 +46,10 @@ func New(client llm.LLMClient, registry *tools.Registry, workDir string, context
 	a.messages = []llm.Message{
 		llm.TextMessage("system", a.systemPrompt()),
 	}
+
+	// Wire the explore sub-agent callback into the tool registry
+	registry.SetExploreFunc(a.runExplore)
+
 	return a
 }
 
@@ -56,6 +61,7 @@ func (a *Agent) SetClient(client llm.LLMClient, contextWindow int) {
 
 // Run processes a user message through the agent loop.
 func (a *Agent) Run(ctx context.Context, userMessage string, term *ui.Terminal) error {
+	a.term = term
 	a.messages = append(a.messages, llm.TextMessage("user", userMessage))
 
 	// Start escape listener for Esc key cancellation
@@ -223,10 +229,13 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall, term
 func (a *Agent) handleConfirmation(confirm *tools.NeedsConfirmation, term *ui.Terminal, listener *ui.InterruptListener) string {
 	switch confirm.Tool {
 	case "write":
-		term.PrintFilePreview(confirm.Path, confirm.Preview)
+		if confirm.Preview == "" {
+			term.PrintFilePreview(confirm.Path, confirm.NewContent)
+		} else {
+			term.PrintDiff(confirm.Path, confirm.Preview, confirm.NewContent)
+		}
 	case "edit":
-		// Preview is the original content; we show the tool name and path
-		fmt.Println()
+		term.PrintDiff(confirm.Path, confirm.Preview, confirm.NewContent)
 	case "bash":
 		fmt.Println()
 	}
@@ -340,6 +349,94 @@ func (a *Agent) doCompact(ctx context.Context, term *ui.Terminal) {
 	term.PrintWarning("Context compacted successfully.")
 }
 
+// MaxExploreIterations is the iteration limit for the explore sub-agent.
+const MaxExploreIterations = 30
+
+// runExplore spawns a child agent with read-only tools to research the codebase.
+// It uses non-streaming SendMessage to avoid interleaved terminal output.
+func (a *Agent) runExplore(ctx context.Context, task string) (string, error) {
+	roRegistry := tools.NewReadOnlyRegistry(a.workDir)
+	toolDefs := roRegistry.Definitions()
+
+	messages := []llm.Message{
+		llm.TextMessage("system", exploreSystemPrompt(a.workDir)),
+		llm.TextMessage("user", task),
+	}
+
+	totalSteps := 0
+
+	for iteration := 0; iteration < MaxExploreIterations; iteration++ {
+		resp, err := a.client.SendMessage(ctx, messages, toolDefs)
+		if err != nil {
+			return "", fmt.Errorf("explore sub-agent LLM error: %w", err)
+		}
+
+		messages = append(messages, resp.Message)
+
+		// If no tool calls, the sub-agent is done — return its final text
+		if len(resp.Message.ToolCalls) == 0 {
+			if a.term != nil {
+				a.term.PrintSubAgentStatus(fmt.Sprintf("Explore complete (%d tool calls)", totalSteps))
+			}
+			return resp.Message.ContentString(), nil
+		}
+
+		// Print all tool calls, then execute in parallel
+		for _, tc := range resp.Message.ToolCalls {
+			totalSteps++
+			if a.term != nil {
+				a.term.PrintSubAgentToolCall(tc.Function.Name, tc.Function.Arguments)
+			}
+		}
+
+		outputs := make([]string, len(resp.Message.ToolCalls))
+		var wg sync.WaitGroup
+		for i, tc := range resp.Message.ToolCalls {
+			wg.Add(1)
+			go func(idx int, tc llm.ToolCall) {
+				defer wg.Done()
+				input := json.RawMessage(tc.Function.Arguments)
+				output, toolErr := roRegistry.Execute(ctx, tc.Function.Name, input)
+				if toolErr != nil {
+					output = fmt.Sprintf("Error: %s", toolErr)
+				}
+				outputs[idx] = output
+			}(i, tc)
+		}
+		wg.Wait()
+
+		for i, tc := range resp.Message.ToolCalls {
+			messages = append(messages, llm.ToolResultMessage(tc.ID, outputs[i]))
+		}
+	}
+
+	if a.term != nil {
+		a.term.PrintSubAgentStatus(fmt.Sprintf("Explore reached max iterations (%d tool calls)", totalSteps))
+	}
+	return "Explore sub-agent reached maximum iterations without completing.", nil
+}
+
+func exploreSystemPrompt(workDir string) string {
+	return fmt.Sprintf(`You are an exploration sub-agent. Your job is to thoroughly research the codebase to answer the given question.
+
+Working directory: %s
+
+This is a READ-ONLY exploration task. You only have access to: glob, grep, ls, read.
+
+Guidelines:
+- Use glob for broad file pattern matching (prefer over repeated ls calls)
+- Use grep for searching file contents with regex
+- Use read when you know the specific file path
+- Use ls only when you need to see directory structure
+
+You are meant to be a fast agent. To achieve this:
+- Make efficient use of your tools — be smart about how you search
+- Wherever possible, call multiple tools in parallel. When you find several files to read, read them ALL in one response instead of one at a time
+- Start broad (glob, grep) then narrow down to specific reads
+
+When you have gathered enough information, provide a clear, structured summary of your findings. Do not ask follow-up questions — just research and report.`, workDir)
+}
+
 // ContextStats holds context usage statistics.
 type ContextStats struct {
 	TotalTokens   int // actual from API, or estimated
@@ -410,6 +507,7 @@ When you encounter an obstacle, do not use destructive actions as a shortcut. Tr
 - Use dedicated tools instead of bash for file operations: read for reading files (not cat/head/tail), edit for editing (not sed/awk), write for creating files (not echo/cat with heredoc). Reserve bash exclusively for system commands and terminal operations that require shell execution.
 - NEVER use bash echo or other command-line tools to communicate with the user. Output all communication directly in your response text.
 - Do not create files unless they're absolutely necessary for achieving your goal. ALWAYS prefer editing an existing file to creating a new one, including markdown files.
+- For broad codebase exploration questions (project structure, how a feature works, finding patterns across files), use the explore tool to delegate the research to a focused sub-agent. This keeps the main conversation focused and avoids cluttering context with intermediate search results.
 
 # Tone and style
 - Only use emojis if the user explicitly requests it.

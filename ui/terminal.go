@@ -184,6 +184,16 @@ func (t *Terminal) PrintToolResult(result string) {
 	}
 }
 
+// PrintSubAgentToolCall prints a sub-agent's tool invocation with deeper indentation.
+func (t *Terminal) PrintSubAgentToolCall(name string, args string) {
+	fmt.Println(t.c(Dim+Yellow, fmt.Sprintf("      ↳ %s", name)) + t.c(Gray, fmt.Sprintf(" %s", truncate(args, 80))))
+}
+
+// PrintSubAgentStatus prints a sub-agent status line.
+func (t *Terminal) PrintSubAgentStatus(msg string) {
+	fmt.Println(t.c(Gray, "      "+msg))
+}
+
 // PrintError prints an error message.
 func (t *Terminal) PrintError(err error) {
 	fmt.Fprintln(os.Stderr, t.c(Red, "Error: "+err.Error()))
@@ -459,6 +469,12 @@ func (t *Terminal) PrintRewindActions() {
 	fmt.Printf("  %s  Summarize from here\n", t.c(Cyan, "[4]"))
 	fmt.Printf("  %s  Never mind\n", t.c(Cyan, "[5]"))
 	fmt.Println()
+}
+
+// PrintProviderPrompt prints a provider selection prompt for custom model entry.
+func (t *Terminal) PrintProviderPrompt(current string) {
+	fmt.Printf("  %s openai  %s anthropic  (current: %s)\n",
+		t.c(Cyan, "[1]"), t.c(Cyan, "[2]"), current)
 }
 
 // PrintRewindComplete prints a confirmation message after a rewind operation.

@@ -57,9 +57,10 @@ func (r *Registry) editTool(ctx context.Context, input json.RawMessage) (string,
 	newContent := strings.Replace(content, params.OldStr, params.NewStr, 1)
 
 	return "", &NeedsConfirmation{
-		Tool:    "edit",
-		Path:    params.Path,
-		Preview: content, // original content for diff
+		Tool:       "edit",
+		Path:       params.Path,
+		Preview:    content,
+		NewContent: newContent,
 		Execute: func() (string, error) {
 			info, err := os.Stat(absPath)
 			if err != nil {

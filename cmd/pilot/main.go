@@ -174,10 +174,7 @@ func newClient(provider, apiKey, model string, maxTokens int, baseURL string) ll
 	case "anthropic":
 		return llm.NewAnthropicClient(apiKey, model, maxTokens, baseURL)
 	default:
-		if strings.HasPrefix(model, "gpt-5") {
-			return llm.NewOpenAIResponsesClient(apiKey, model, maxTokens, baseURL)
-		}
-		return llm.NewOpenAIClient(apiKey, model, maxTokens, baseURL)
+		return llm.NewOpenAIResponsesClient(apiKey, model, maxTokens, baseURL)
 	}
 }
 
@@ -207,6 +204,25 @@ func handleModelSwitch(reader *bufio.Reader, term *ui.Terminal, ag *agent.Agent,
 	n, err := strconv.Atoi(choice)
 	if err == nil {
 		if n == 0 {
+			// Ask which provider to use
+			term.PrintProviderPrompt(*currentProvider)
+			fmt.Print("Provider (Enter for current): ")
+			pChoice, pErr := reader.ReadString('\n')
+			if pErr != nil {
+				return
+			}
+			switch strings.TrimSpace(pChoice) {
+			case "1":
+				selectedProvider = "openai"
+			case "2":
+				selectedProvider = "anthropic"
+			case "":
+				selectedProvider = *currentProvider
+			default:
+				term.PrintWarning("Invalid choice.")
+				return
+			}
+
 			// Custom model name
 			fmt.Print("Model name: ")
 			custom, err := reader.ReadString('\n')
@@ -218,7 +234,6 @@ func handleModelSwitch(reader *bufio.Reader, term *ui.Terminal, ag *agent.Agent,
 				return
 			}
 			selectedModel = custom
-			selectedProvider = *currentProvider // assume same provider
 		} else if n >= 1 && n <= len(models) {
 			selectedModel = models[n-1].Model
 			selectedProvider = models[n-1].Provider
