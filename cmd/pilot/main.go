@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"sync"
@@ -19,7 +20,24 @@ import (
 	"github.com/lowkaihon/cli-coding-agent/ui"
 )
 
+var version = "dev"
+
+func getVersion() string {
+	if version != "dev" {
+		return version
+	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return "dev"
+}
+
 func main() {
+	if len(os.Args) > 1 && (os.Args[1] == "--version" || os.Args[1] == "-v") {
+		fmt.Printf("pilot %s\n", getVersion())
+		os.Exit(0)
+	}
+
 	rootCtx := context.Background()
 
 	// Set up signal handling: Ctrl+C cancels current operation first, exits on double-tap
@@ -46,7 +64,7 @@ func main() {
 	ag := agent.New(client, registry, workDir, cfg.ContextWindow)
 
 	term := ui.NewTerminal()
-	term.PrintBanner(currentModel, workDir)
+	term.PrintBanner(currentModel, workDir, getVersion())
 
 	reader := bufio.NewReader(os.Stdin)
 

@@ -54,8 +54,12 @@ func (t *Terminal) c(code, text string) string {
 }
 
 // PrintBanner prints the startup banner.
-func (t *Terminal) PrintBanner(model, workDir string) {
-	fmt.Println(t.c(Bold+Cyan, "Pilot") + t.c(Gray, " — AI coding agent"))
+func (t *Terminal) PrintBanner(model, workDir, version string) {
+	name := "Pilot"
+	if version != "" && version != "dev" {
+		name = "Pilot " + version
+	}
+	fmt.Println(t.c(Bold+Cyan, name) + t.c(Gray, " — AI coding agent"))
 	fmt.Println(t.c(Gray, fmt.Sprintf("Model: %s | Dir: %s", model, workDir)))
 	fmt.Println(t.c(Gray, "Type '/help' for commands."))
 	fmt.Println()
