@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/lowkaihon/cli-coding-agent/llm"
 	"github.com/lowkaihon/cli-coding-agent/tools"
@@ -24,15 +25,22 @@ type Agent struct {
 	workDir        string
 	contextWindow  int
 	lastTokensUsed int // TotalTokens from most recent API response
+	sessionID      string
+	sessionCreated time.Time
+	checkpoints    []Checkpoint              // ordered by turn
+	fileOriginals  map[string]*FileSnapshot  // pre-session state of each modified file
 }
 
 // New creates a new Agent with the system prompt initialized.
 func New(client llm.LLMClient, registry *tools.Registry, workDir string, contextWindow int) *Agent {
 	a := &Agent{
-		client:        client,
-		tools:         registry,
-		workDir:       workDir,
-		contextWindow: contextWindow,
+		client:         client,
+		tools:          registry,
+		workDir:        workDir,
+		contextWindow:  contextWindow,
+		sessionID:      generateSessionID(),
+		sessionCreated: time.Now(),
+		fileOriginals:  make(map[string]*FileSnapshot),
 	}
 	a.messages = []llm.Message{
 		llm.TextMessage("system", a.systemPrompt()),
@@ -237,6 +245,11 @@ func (a *Agent) handleConfirmation(confirm *tools.NeedsConfirmation, term *ui.Te
 
 	if !approved {
 		return "User denied the operation."
+	}
+
+	// Capture file state before modification for checkpointing
+	if confirm.Tool == "write" || confirm.Tool == "edit" {
+		a.captureFileBeforeModification(confirm.Path)
 	}
 
 	result, err := confirm.Execute()

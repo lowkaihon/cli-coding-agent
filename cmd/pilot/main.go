@@ -91,14 +91,19 @@ func main() {
 
 	running := true
 	for running {
-		term.PrintPrompt()
-
-		input, err := readInput(reader)
+		input, rewind, err := term.ReadLine(term.Prompt())
 		if err != nil {
 			// EOF (Ctrl+D) or error
-			fmt.Println()
 			break
 		}
+
+		if rewind {
+			handleRewind(reader, term, ag, rootCtx)
+			continue
+		}
+
+		// Recreate reader after raw-mode ReadLine to avoid stale buffer
+		reader = bufio.NewReader(os.Stdin)
 
 		if input == "" {
 			continue
@@ -111,9 +116,15 @@ func main() {
 			handleModelSwitch(reader, term, ag, &currentModel, &currentProvider)
 		case "/quit":
 			running = false
+		case "/resume":
+			handleResume(reader, term, ag, workDir)
 		case "/compact":
 			if err := ag.Compact(rootCtx, term); err != nil {
 				term.PrintError(err)
+			} else {
+				if err := ag.SaveSession(); err != nil {
+					term.PrintWarning(fmt.Sprintf("Session save failed: %s", err))
+				}
 			}
 		case "/clear":
 			ag.Clear(term)
@@ -122,7 +133,11 @@ func main() {
 			term.PrintContextUsage(s.TotalTokens, s.ContextWindow, s.Threshold,
 				s.MessageCount, s.SystemTokens, s.ToolDefTokens,
 				s.MessageTokens, s.ActualTokens)
+		case "/rewind":
+			handleRewind(reader, term, ag, rootCtx)
 		default:
+			ag.CreateCheckpoint(input)
+
 			// Create a per-run cancellable context
 			runCtx, cancel := context.WithCancel(rootCtx)
 
@@ -146,52 +161,12 @@ func main() {
 					term.PrintError(err)
 				}
 			}
+
+			if saveErr := ag.SaveSession(); saveErr != nil {
+				term.PrintWarning(fmt.Sprintf("Session save failed: %s", saveErr))
+			}
 		}
 	}
-}
-
-// readInput reads one or more lines from the reader, combining pasted
-// multi-line input into a single string. It detects paste by checking
-// both the bufio buffer and the OS-level stdin buffer for pending data.
-func readInput(reader *bufio.Reader) (string, error) {
-	line, err := reader.ReadString('\n')
-	if err != nil {
-		return "", err
-	}
-
-	line = strings.TrimRight(line, "\r\n")
-
-	// Check if more data is available (paste detection).
-	// reader.Buffered() catches data already read into Go's bufio buffer.
-	// ui.StdinHasData() catches data still in the OS console/stdin buffer
-	// (needed on Windows where ReadFile returns one line at a time).
-	if reader.Buffered() == 0 && !ui.StdinHasData() {
-		return strings.TrimSpace(line), nil
-	}
-
-	// More data available — this is a paste. Collect all lines.
-	lines := []string{line}
-	for reader.Buffered() > 0 || ui.StdinHasData() {
-		next, err := reader.ReadString('\n')
-		if err != nil {
-			lines = append(lines, strings.TrimRight(next, "\r\n"))
-			break
-		}
-		lines = append(lines, strings.TrimRight(next, "\r\n"))
-	}
-
-	// Brief wait to catch any OS-level stragglers for large pastes
-	time.Sleep(50 * time.Millisecond)
-	for reader.Buffered() > 0 || ui.StdinHasData() {
-		next, err := reader.ReadString('\n')
-		if err != nil {
-			lines = append(lines, strings.TrimRight(next, "\r\n"))
-			break
-		}
-		lines = append(lines, strings.TrimRight(next, "\r\n"))
-	}
-
-	return strings.Join(lines, "\n"), nil
 }
 
 func newClient(provider, apiKey, model string, maxTokens int, baseURL string) llm.LLMClient {
@@ -275,4 +250,124 @@ func handleModelSwitch(reader *bufio.Reader, term *ui.Terminal, ag *agent.Agent,
 	*currentProvider = selectedProvider
 
 	term.PrintModelSwitch(selectedModel)
+}
+
+func handleResume(reader *bufio.Reader, term *ui.Terminal, ag *agent.Agent, workDir string) {
+	sessions, err := agent.ListSessions(workDir, 10)
+	if err != nil {
+		term.PrintError(fmt.Errorf("list sessions: %w", err))
+		return
+	}
+	if len(sessions) == 0 {
+		term.PrintWarning("No saved sessions found.")
+		return
+	}
+
+	items := make([]ui.SessionListItem, len(sessions))
+	for i, s := range sessions {
+		items[i] = ui.SessionListItem{
+			ID:       s.ID,
+			Updated:  s.UpdatedAt,
+			Preview:  s.Preview,
+			MsgCount: s.MsgCount,
+		}
+	}
+	term.PrintSessionList(items)
+
+	fmt.Print("Choice: ")
+	choice, err := reader.ReadString('\n')
+	if err != nil {
+		return
+	}
+	choice = strings.TrimSpace(choice)
+	if choice == "" {
+		return
+	}
+
+	n, err := strconv.Atoi(choice)
+	if err != nil || n < 1 || n > len(sessions) {
+		term.PrintWarning("Invalid choice.")
+		return
+	}
+
+	selected := sessions[n-1]
+	if err := ag.ResumeSession(selected.ID); err != nil {
+		term.PrintError(fmt.Errorf("resume session: %w", err))
+		return
+	}
+
+	term.PrintSessionResumed(selected.MsgCount, selected.Preview)
+}
+
+func handleRewind(reader *bufio.Reader, term *ui.Terminal, ag *agent.Agent, ctx context.Context) {
+	items := ag.Checkpoints()
+	if len(items) == 0 {
+		term.PrintWarning("No checkpoints available. Checkpoints are created at the start of each turn.")
+		return
+	}
+
+	// Convert to UI type
+	uiItems := make([]ui.CheckpointListItem, len(items))
+	for i, item := range items {
+		uiItems[i] = ui.CheckpointListItem{
+			Turn:      item.Turn,
+			Timestamp: item.Timestamp,
+			Preview:   item.Preview,
+		}
+	}
+	term.PrintCheckpointList(uiItems)
+
+	fmt.Print("Checkpoint number: ")
+	choice, err := reader.ReadString('\n')
+	if err != nil {
+		return
+	}
+	choice = strings.TrimSpace(choice)
+	if choice == "" {
+		return
+	}
+
+	n, err := strconv.Atoi(choice)
+	if err != nil || n < 1 || n > len(items) {
+		term.PrintWarning("Invalid checkpoint number.")
+		return
+	}
+
+	term.PrintRewindActions()
+
+	fmt.Print("Action: ")
+	action, err := reader.ReadString('\n')
+	if err != nil {
+		return
+	}
+	action = strings.TrimSpace(action)
+
+	switch action {
+	case "1":
+		if err := ag.RewindAll(n); err != nil {
+			term.PrintError(err)
+			return
+		}
+		term.PrintRewindComplete("restored code and conversation")
+	case "2":
+		ag.RewindConversation(n)
+		term.PrintRewindComplete("restored conversation only")
+	case "3":
+		if err := ag.RewindCode(n); err != nil {
+			term.PrintError(err)
+			return
+		}
+		term.PrintRewindComplete("restored code only")
+	case "4":
+		if err := ag.SummarizeFrom(ctx, n, term); err != nil {
+			term.PrintError(err)
+			return
+		}
+		term.PrintRewindComplete("summarized from checkpoint")
+	case "5":
+		// Never mind
+		return
+	default:
+		term.PrintWarning("Invalid action.")
+	}
 }

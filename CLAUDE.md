@@ -21,7 +21,7 @@ Pilot is a terminal-based AI coding agent. The main loop is a REPL that passes u
 
 ```
 cmd/pilot/main.go (REPL + slash commands + signal handling)
-  → /help, /model, /compact, /clear, /context, /quit handled directly
+  → /help, /model, /compact, /clear, /context, /resume, /rewind, /quit handled directly
   → agent.Agent.Run()
       → compactIfNeeded()                — auto-compact at 80% context window
       → llm.LLMClient.StreamMessage()   — sends messages, returns SSE event channel

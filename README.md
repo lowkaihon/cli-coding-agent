@@ -14,6 +14,8 @@ No agent frameworks. No LangChain. Just an LLM API client and a hand-rolled tool
 - **Path sandboxing** — all file operations are validated to stay within the working directory
 - **Atomic file writes** — write and edit use temp file + rename to prevent corruption
 - **Context management** — LLM-based conversation compaction when approaching context limits
+- **Persistent sessions** — conversations auto-save in `.pilot/`, and `/resume` lets you reload a previous run
+- **Checkpoints & rewind** — each turn can create checkpoints; `/rewind` lets you restore code, conversation, or summarize from a checkpoint
 - **Persistent memory** — project-scoped knowledge in `MEMORY.md`, loaded into the system prompt
 - **Concurrent tools** — read-only tool calls execute in parallel
 - **Zero external dependencies** — pure Go standard library
@@ -85,6 +87,8 @@ Once running, type natural language instructions at the `>` prompt:
 | `/compact` | Force conversation compaction (LLM summarizes history) |
 | `/clear` | Clear conversation history (fresh start) |
 | `/context` | Show context window usage |
+| `/resume` | Resume a previously saved session |
+| `/rewind` | Rewind to a previous checkpoint |
 | `/quit` | Exit Pilot |
 
 ## Tools

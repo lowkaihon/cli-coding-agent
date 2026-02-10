@@ -1,11 +1,14 @@
 package ui
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
+	"time"
 )
 
 // ANSI color codes
@@ -52,15 +55,102 @@ func (t *Terminal) c(code, text string) string {
 
 // PrintBanner prints the startup banner.
 func (t *Terminal) PrintBanner(model, workDir string) {
-	fmt.Println(t.c(Bold+Cyan, "pilot") + t.c(Gray, " — AI coding agent"))
+	fmt.Println(t.c(Bold+Cyan, "Pilot") + t.c(Gray, " — AI coding agent"))
 	fmt.Println(t.c(Gray, fmt.Sprintf("Model: %s | Dir: %s", model, workDir)))
 	fmt.Println(t.c(Gray, "Type '/help' for commands."))
 	fmt.Println()
 }
 
+// Prompt returns the formatted prompt string.
+func (t *Terminal) Prompt() string {
+	return t.c(Bold+Blue, "> ")
+}
+
 // PrintPrompt prints the input prompt.
 func (t *Terminal) PrintPrompt() {
-	fmt.Print(t.c(Bold+Blue, "> "))
+	fmt.Print(t.Prompt())
+}
+
+// ReadLine reads a line of input using raw mode, supporting double-Esc detection
+// for triggering /rewind. Returns the input string, whether a rewind was requested,
+// and any error (io.EOF on Ctrl+D).
+// Falls back to buffered line reading if raw mode is unavailable.
+func (t *Terminal) ReadLine(prompt string) (string, bool, error) {
+	fmt.Print(prompt)
+
+	rm, err := NewRawMode()
+	if err != nil {
+		return t.readLineFallback()
+	}
+	if err := rm.Enable(); err != nil {
+		return t.readLineFallback()
+	}
+	defer rm.Disable()
+
+	var buf []byte
+	var lastEsc time.Time
+	stopCh := make(chan struct{}) // never closed — ReadKeyContext uses it for cancellation
+
+	for {
+		ch, err := rm.ReadKeyContext(stopCh)
+		if err != nil {
+			// Read error — return what we have
+			if len(buf) > 0 {
+				fmt.Println()
+				return string(buf), false, nil
+			}
+			return "", false, io.EOF
+		}
+
+		switch {
+		case ch == 0x1B: // Esc
+			if !lastEsc.IsZero() && time.Since(lastEsc) < 500*time.Millisecond {
+				// Double-Esc — rewind requested
+				fmt.Println()
+				return "", true, nil
+			}
+			lastEsc = time.Now()
+
+		case ch == 0x0D || ch == 0x0A: // Enter
+			fmt.Println()
+			return strings.TrimSpace(string(buf)), false, nil
+
+		case ch == 0x7F || ch == 0x08: // Backspace
+			if len(buf) > 0 {
+				buf = buf[:len(buf)-1]
+				fmt.Print("\b \b")
+			}
+
+		case ch == 0x03: // Ctrl+C
+			// Clear current line, return empty
+			fmt.Println()
+			return "", false, nil
+
+		case ch == 0x04: // Ctrl+D
+			if len(buf) == 0 {
+				fmt.Println()
+				return "", false, io.EOF
+			}
+			// Ignore Ctrl+D when buffer is non-empty
+
+		case ch >= 0x20 && ch <= 0x7E: // Printable ASCII
+			buf = append(buf, ch)
+			fmt.Print(string(ch))
+
+		default:
+			// Ignore other control characters
+		}
+	}
+}
+
+// readLineFallback reads a line using standard buffered I/O when raw mode is unavailable.
+func (t *Terminal) readLineFallback() (string, bool, error) {
+	reader := bufio.NewReader(os.Stdin)
+	line, err := reader.ReadString('\n')
+	if err != nil {
+		return "", false, err
+	}
+	return strings.TrimSpace(line), false, nil
 }
 
 // PrintAssistant prints assistant text.
@@ -123,6 +213,8 @@ func (t *Terminal) PrintHelp() {
 	fmt.Println(t.c(Cyan, "  /compact") + " Compact conversation (LLM summarizes history)")
 	fmt.Println(t.c(Cyan, "  /clear  ") + " Clear conversation history")
 	fmt.Println(t.c(Cyan, "  /context") + " Show context window usage")
+	fmt.Println(t.c(Cyan, "  /resume ") + " Resume a previous session")
+	fmt.Println(t.c(Cyan, "  /rewind ") + " Rewind to a previous checkpoint")
 	fmt.Println(t.c(Cyan, "  /quit   ") + " Exit Pilot")
 	fmt.Println()
 }
@@ -281,4 +373,96 @@ func (il *InterruptListener) Resume() {
 	il.mu.Lock()
 	il.active = true
 	il.mu.Unlock()
+}
+
+// SessionListItem represents a session entry for display.
+type SessionListItem struct {
+	ID       string
+	Updated  time.Time
+	Preview  string
+	MsgCount int
+}
+
+// PrintSessionList displays a numbered list of recent sessions.
+func (t *Terminal) PrintSessionList(items []SessionListItem) {
+	fmt.Println(t.c(Bold, "Recent sessions:"))
+	for i, item := range items {
+		age := formatAge(item.Updated)
+		preview := item.Preview
+		if len(preview) > 60 {
+			preview = preview[:60] + "..."
+		}
+		fmt.Printf("  %s  %s  %s  %s\n",
+			t.c(Cyan, fmt.Sprintf("[%d]", i+1)),
+			t.c(Gray, fmt.Sprintf("%-8s", age)),
+			t.c(White, fmt.Sprintf("%q", preview)),
+			t.c(Gray, fmt.Sprintf("(%d messages)", item.MsgCount)),
+		)
+	}
+	fmt.Println()
+}
+
+// PrintSessionResumed prints a confirmation after resuming a session.
+func (t *Terminal) PrintSessionResumed(msgCount int, preview string) {
+	if len(preview) > 60 {
+		preview = preview[:60] + "..."
+	}
+	fmt.Println(t.c(Green, fmt.Sprintf("Resumed session: %q (%d messages)", preview, msgCount)))
+	fmt.Println()
+}
+
+func formatAge(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "just now"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
+}
+
+// CheckpointListItem represents a checkpoint entry for display.
+type CheckpointListItem struct {
+	Turn      int
+	Timestamp time.Time
+	Preview   string
+}
+
+// PrintCheckpointList displays a numbered list of checkpoints.
+func (t *Terminal) PrintCheckpointList(items []CheckpointListItem) {
+	fmt.Println(t.c(Bold, "Checkpoints:"))
+	for _, item := range items {
+		age := formatAge(item.Timestamp)
+		preview := item.Preview
+		if len(preview) > 60 {
+			preview = preview[:60] + "..."
+		}
+		fmt.Printf("  %s  %s  %s\n",
+			t.c(Cyan, fmt.Sprintf("[%d]", item.Turn)),
+			t.c(Gray, fmt.Sprintf("%-8s", age)),
+			t.c(White, fmt.Sprintf("%q", preview)),
+		)
+	}
+	fmt.Println()
+}
+
+// PrintRewindActions displays the rewind action menu.
+func (t *Terminal) PrintRewindActions() {
+	fmt.Println(t.c(Bold, "Choose action:"))
+	fmt.Printf("  %s  Restore code and conversation\n", t.c(Cyan, "[1]"))
+	fmt.Printf("  %s  Restore conversation only\n", t.c(Cyan, "[2]"))
+	fmt.Printf("  %s  Restore code only\n", t.c(Cyan, "[3]"))
+	fmt.Printf("  %s  Summarize from here\n", t.c(Cyan, "[4]"))
+	fmt.Printf("  %s  Never mind\n", t.c(Cyan, "[5]"))
+	fmt.Println()
+}
+
+// PrintRewindComplete prints a confirmation message after a rewind operation.
+func (t *Terminal) PrintRewindComplete(action string) {
+	fmt.Println(t.c(Green, fmt.Sprintf("Rewind complete: %s", action)))
+	fmt.Println()
 }
