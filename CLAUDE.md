@@ -9,8 +9,6 @@ go build -o pilot ./cmd/pilot      # Build binary
 go vet ./...                       # Lint
 go test ./...                      # Run all tests
 go run ./cmd/pilot                 # Run without building
-go run ./cmd/pilot -model gpt-4o  # Override default model
-go run ./cmd/pilot -provider anthropic  # Use Anthropic
 ```
 
 Zero external dependencies — pure Go standard library.
@@ -22,20 +20,23 @@ Pilot is a terminal-based AI coding agent. The main loop is a REPL that passes u
 ```
 cmd/pilot/main.go (REPL + slash commands + signal handling)
   → /help, /model, /compact, /clear, /context, /resume, /rewind, /quit handled directly
+  → agent.CreateCheckpoint()           — snapshot files + conversation before each turn
   → agent.Agent.Run()
-      → compactIfNeeded()                — auto-compact at 80% context window
-      → llm.LLMClient.StreamMessage()   — sends messages, returns SSE event channel
-      → llm.AccumulateStream()           — collects events, calls onText for live display
-      → tools.Registry.Execute()         — dispatches tool calls
+      → StartEscapeListener()          — wrap context with Esc key cancellation
+      → compactIfNeeded()              — auto-compact at 80% context window
+      → llm.LLMClient.StreamMessage()  — sends messages, returns SSE event channel
+      → llm.AccumulateStream()         — collects events, calls onText for live display
+      → tools.Registry.Execute()       — dispatches tool calls
       → loop back until stop/no tools/50 iterations
+  → agent.SaveSession()                — auto-save conversation to .pilot/
 ```
 
 **Package dependencies** (strict, no cycles):
 
 | Package | Responsibility | Dependencies |
 |---------|---------------|--------------|
-| `cmd/pilot` | CLI entrypoint, REPL, flags | agent, config, llm, tools, ui |
-| `agent` | Agentic loop, message history, context compaction, memory | llm, tools, ui |
+| `cmd/pilot` | CLI entrypoint, REPL, slash commands | agent, config, llm, tools, ui |
+| `agent` | Agentic loop, message history, context compaction, sessions, checkpoints, memory | llm, tools, ui |
 | `llm` | LLM client interface, OpenAI + Anthropic implementations, streaming | none (internal) |
 | `tools` | Tool registry, all tool implementations, path security | llm (types only) |
 | `config` | Configuration loading, .env parsing, API key management | none (internal) |
@@ -45,7 +46,7 @@ cmd/pilot/main.go (REPL + slash commands + signal handling)
 
 **`Message.Content` is `*string`, not `string`** — OpenAI API requires distinguishing `null` (omit) from `""` (empty). JSON `omitempty` on a plain string drops empty strings. Always use helper constructors: `llm.TextMessage(role, content)`, `llm.ToolResultMessage(id, content)`.
 
-**`NeedsConfirmation` error for deferred writes** — Write, edit, and bash tools don't execute immediately. They return a `*tools.NeedsConfirmation` error containing an `Execute()` closure. The agent loop type-asserts this error, shows the user a preview, and only calls `Execute()` on approval. This keeps tool logic separate from UI confirmation.
+**`NeedsConfirmation` error for deferred writes** — Write, edit, and bash tools return a `*tools.NeedsConfirmation` error containing an `Execute()` closure instead of executing immediately. The agent loop type-asserts this, shows a preview, and calls `Execute()` on approval.
 
 **`tools.ValidatePath()` is mandatory** — Every file-operating tool must call `ValidatePath(workDir, requestedPath)` to sandbox paths within the working directory. Skipping this enables path traversal.
 
@@ -53,15 +54,23 @@ cmd/pilot/main.go (REPL + slash commands + signal handling)
 
 **Tool registry is an ordered slice** — Not a map. Registration order (glob → grep → ls → read → write → edit → bash → explore) is deterministic, which affects LLM behavior.
 
-**Explore sub-agent** — The `explore` tool spawns a child agent with a read-only tool registry (glob, grep, ls, read only). It uses non-streaming `SendMessage()` to avoid terminal output conflicts, executes up to 30 iterations, and returns a summary. This avoids cluttering the main agent's context with exploratory searches. The callback is injected via `SetExploreFunc()` to break circular dependencies between agent and tools packages.
+**Explore sub-agent** — The `explore` tool spawns a child agent with a read-only tool registry (glob, grep, ls, read). Uses non-streaming `SendMessage()` to avoid terminal output conflicts, up to 30 iterations. Callback injected via `SetExploreFunc()` to break circular dependency between agent and tools packages.
 
 **Streaming accumulates tool calls by index** — `AccumulateStream()` maps tool call deltas by their `Index` field since multiple tool calls arrive interleaved across SSE chunks. The `onText` callback enables real-time display during accumulation.
 
-**Retry logic is centralized** — `llm/retry.go` provides `doWithRetry()` with exponential backoff (2s base, 60s max) and jitter. Both Anthropic and OpenAI clients use this shared implementation for rate limit (429) and server error (5xx) handling.
+**Retry logic is centralized** — `llm/retry.go` provides `doWithRetry()` with exponential backoff (2s base, 60s max) and jitter. Used by both providers for 429 and 5xx handling. Retry-After headers are consumed as a one-shot override without altering the backoff curve.
+
+**Esc key interrupt** — `term.StartEscapeListener(ctx)` in `ui/terminal.go` wraps context with Esc key cancellation. Listener paused/resumed around `ConfirmAction()` to avoid raw mode conflicts with `fmt.Scanln`.
+
+**Shared skip-dir logic** — `tools/walk.go` defines `shouldSkipDir()` used by both glob and grep to consistently skip `.git`, `node_modules`, `.venv`, `__pycache__` during directory traversal.
+
+**Persistent memory** — `systemPrompt()` in `agent/agent.go` reads `MEMORY.md` from the working directory and appends its contents to the system prompt. No dedicated "remember" tool; the LLM uses `edit` on MEMORY.md directly.
+
+**Session persistence & checkpoints** — Sessions auto-save to `.pilot/sessions/` as JSON (`agent/session.go`). `CreateCheckpoint()` snapshots conversation + modified files before each turn (`agent/checkpoint.go`). `captureFileBeforeModification()` populates `fileOriginals` map before write/edit execution. `/rewind` offers: restore code+conversation, conversation only, code only, or summarize-from via `SummarizeFrom()`.
 
 ## Context Management
 
-The agent auto-compacts when token usage exceeds 80% of the context window (`ContextBuffer = 0.2`). It uses API-reported `TotalTokens` from the most recent response (`lastTokensUsed` in `agent/agent.go`), falling back to a chars/4 heuristic (`EstimateTokens` in `agent/context.go`) before the first API call.
+Auto-compacts at 80% of context window (`ContextBuffer = 0.2`). Uses API-reported `TotalTokens` (`lastTokensUsed`), falling back to chars/4 heuristic (`EstimateTokens` in `agent/context.go`).
 
 **Compaction flow** (`doCompact` in `agent/agent.go`):
 1. `serializeHistory()` formats all messages into readable text (truncating long tool results and system prompts)
@@ -85,11 +94,7 @@ type LLMClient interface {
 }
 ```
 
-Implementations:
-- **OpenAI**: Uses Responses API (GPT-5.x models like `gpt-4o-mini`). Chat Completions API has been removed.
-- **Anthropic**: Uses Messages API (Claude models like `claude-sonnet-4-5-20250929`).
-
-Key differences handled internally:
+OpenAI uses Responses API; Anthropic uses Messages API. Key differences handled internally:
 - **Message format**: OpenAI uses `content` string; Anthropic uses content block arrays
 - **Tool calls**: OpenAI has separate `tool_calls` field; Anthropic uses `tool_use` content blocks
 - **System prompt**: OpenAI puts it in messages; Anthropic uses top-level `system` field
@@ -101,10 +106,3 @@ Key differences handled internally:
 When the LLM returns multiple tool calls, Pilot checks if all are read-only (glob, grep, ls, read, explore). If so, they execute concurrently via goroutines with `sync.WaitGroup`. Results are collected into a pre-allocated slice indexed by position — no mutex needed.
 
 Write tools (write, edit, bash) execute sequentially because they return `NeedsConfirmation` errors requiring interactive user input. The `explore` sub-agent also runs read-only tools concurrently internally.
-
-## Security Model
-
-- **Path sandboxing**: `ValidatePath()` resolves to absolute, verifies within working directory, rejects traversal
-- **Deferred writes**: `NeedsConfirmation` error type separates tool logic from user confirmation
-- **Bash safety**: All commands require confirmation, 30s default timeout (120s max), output truncated to 10,000 chars
-- **Atomic writes**: Temp file + `os.Rename` prevents partial writes on crash

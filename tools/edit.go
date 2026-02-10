@@ -44,9 +44,10 @@ func (r *Registry) editTool(ctx context.Context, input json.RawMessage) (string,
 	if count > 1 {
 		// Find line numbers of each match to help the LLM provide more context
 		lines := strings.Split(content, "\n")
+		firstLine := strings.SplitN(params.OldStr, "\n", 2)[0]
 		var locations []string
 		for i, line := range lines {
-			if strings.Contains(line, strings.Split(params.OldStr, "\n")[0]) {
+			if strings.Contains(line, firstLine) {
 				locations = append(locations, fmt.Sprintf("line %d", i+1))
 			}
 		}

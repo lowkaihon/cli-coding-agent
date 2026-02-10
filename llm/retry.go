@@ -47,9 +47,15 @@ func (e *retryableError) Error() string {
 // the HTTP response. On success (2xx), it returns the response for the caller
 // to process. On non-retryable errors (4xx except 429), it returns immediately.
 func doWithRetry(ctx context.Context, cfg retryConfig, doReq func() (*http.Response, error)) (*http.Response, error) {
+	var retryAfterOverride time.Duration // one-shot override from Retry-After header
+
 	for attempt := 0; attempt <= cfg.maxRetries; attempt++ {
 		if attempt > 0 {
 			delay := backoffDelay(attempt-1, cfg.baseDelay, cfg.maxDelay)
+			if retryAfterOverride > delay {
+				delay = retryAfterOverride
+			}
+			retryAfterOverride = 0 // consume the override
 			select {
 			case <-ctx.Done():
 				return nil, ctx.Err()
@@ -75,13 +81,8 @@ func doWithRetry(ctx context.Context, cfg retryConfig, doReq func() (*http.Respo
 			return nil, fmt.Errorf("authentication error (HTTP %d): %s", resp.StatusCode, string(body))
 
 		case resp.StatusCode == 429, resp.StatusCode >= 500:
-			// Check Retry-After header and use it as minimum delay for next attempt
-			if retryAfter := parseRetryAfter(resp); retryAfter > 0 && retryAfter < cfg.maxDelay {
-				nextBackoff := backoffDelay(attempt, cfg.baseDelay, cfg.maxDelay)
-				if retryAfter > nextBackoff {
-					// Override base delay temporarily for next iteration
-					cfg.baseDelay = retryAfter
-				}
+			if ra := parseRetryAfter(resp); ra > 0 && ra < cfg.maxDelay {
+				retryAfterOverride = ra
 			}
 			body, _ := io.ReadAll(resp.Body)
 			resp.Body.Close()

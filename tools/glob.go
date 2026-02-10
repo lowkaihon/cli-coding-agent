@@ -35,8 +35,7 @@ func (r *Registry) globTool(ctx context.Context, input json.RawMessage) (string,
 
 		// Skip hidden directories and common ignores
 		if d.IsDir() {
-			name := d.Name()
-			if name == ".git" || name == "node_modules" || name == ".venv" || name == "__pycache__" {
+			if shouldSkipDir(d.Name()) {
 				return filepath.SkipDir
 			}
 			// Skip symlinks that point to directories

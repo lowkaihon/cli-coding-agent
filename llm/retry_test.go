@@ -149,6 +149,53 @@ func TestDoWithRetry_ServerError_Retries(t *testing.T) {
 	}
 }
 
+func TestDoWithRetry_RetryAfterIsOneShot(t *testing.T) {
+	// Verify that a Retry-After header only affects the immediately next attempt,
+	// not all subsequent attempts (i.e., exponential backoff is preserved).
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		if n == 1 {
+			// First call: 429 with large Retry-After
+			w.Header().Set("Retry-After", "1")
+			w.WriteHeader(429)
+			w.Write([]byte(`rate limited`))
+			return
+		}
+		if n == 2 {
+			// Second call: 429 without Retry-After
+			w.WriteHeader(429)
+			w.Write([]byte(`rate limited`))
+			return
+		}
+		w.WriteHeader(200)
+		w.Write([]byte(`ok`))
+	}))
+	defer server.Close()
+
+	cfg := retryConfig{maxRetries: 5, baseDelay: 10 * time.Millisecond, maxDelay: 5 * time.Second}
+
+	start := time.Now()
+	resp, err := doWithRetry(context.Background(), cfg, func() (*http.Response, error) {
+		return http.Get(server.URL)
+	})
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	resp.Body.Close()
+
+	// The first retry should wait ~1s (Retry-After), the second should use normal
+	// exponential backoff (~20ms = 10ms * 2^1 + jitter), not ~2s.
+	// Total should be well under 2s if backoff isn't permanently overridden.
+	if elapsed > 2*time.Second {
+		t.Errorf("total elapsed %v suggests Retry-After permanently overrode backoff", elapsed)
+	}
+	if calls.Load() != 3 {
+		t.Fatalf("expected 3 attempts, got %d", calls.Load())
+	}
+}
+
 func TestParseRetryAfter(t *testing.T) {
 	tests := []struct {
 		header string

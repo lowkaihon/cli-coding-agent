@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -203,13 +204,13 @@ func (c *AnthropicClient) SendMessage(ctx context.Context, messages []Message, t
 }
 
 func (c *AnthropicClient) convertResponse(resp anthropicResponse) *Response {
-	var content string
+	var content strings.Builder
 	var toolCalls []ToolCall
 
 	for _, block := range resp.Content {
 		switch block.Type {
 		case "text":
-			content += block.Text
+			content.WriteString(block.Text)
 		case "tool_use":
 			args, _ := json.Marshal(block.Input)
 			if args == nil {
@@ -227,8 +228,9 @@ func (c *AnthropicClient) convertResponse(resp anthropicResponse) *Response {
 	}
 
 	var contentPtr *string
-	if content != "" {
-		contentPtr = &content
+	if content.Len() > 0 {
+		s := content.String()
+		contentPtr = &s
 	}
 
 	finishReason := "stop"

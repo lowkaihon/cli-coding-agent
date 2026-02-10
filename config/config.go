@@ -8,6 +8,8 @@ import (
 	"strings"
 )
 
+// Config holds the resolved LLM provider configuration including API credentials,
+// model selection, and context window limits.
 type Config struct {
 	Provider      string
 	APIKey        string

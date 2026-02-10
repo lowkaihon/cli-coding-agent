@@ -75,7 +75,9 @@ func (r *Registry) Definitions() []llm.ToolDef {
 	return defs
 }
 
-func (r *Registry) registerBuiltins() {
+// registerReadOnlyTools registers the read-only tools (glob, grep, ls, read).
+// Shared by both the full registry and the read-only registry used by the explore sub-agent.
+func (r *Registry) registerReadOnlyTools() {
 	r.register("glob",
 		`Fast file pattern matching tool. Supports glob patterns like "**/*.go" or "src/**/*.ts". Returns matching file paths relative to working directory, sorted by modification time. Use this tool when you need to find files by name patterns. Prefer this over bash find or ls commands.`,
 		json.RawMessage(`{
@@ -149,6 +151,10 @@ func (r *Registry) registerBuiltins() {
 		}`),
 		r.readTool,
 	)
+}
+
+func (r *Registry) registerBuiltins() {
+	r.registerReadOnlyTools()
 
 	r.register("write",
 		`Create or overwrite a file with the given content. Creates parent directories if needed. User confirmation required. ALWAYS prefer editing existing files over writing new ones — use the edit tool to modify existing files. Never proactively create documentation files (*.md) or README files unless explicitly requested.`,

@@ -57,7 +57,7 @@ func AccumulateStream(events <-chan StreamEvent, onText func(string)) (*Response
 		contentPtr = &s
 	}
 
-	var calls []ToolCall
+	calls := make([]ToolCall, 0, len(toolCalls))
 	for i := 0; i < len(toolCalls); i++ {
 		if tc, ok := toolCalls[i]; ok {
 			calls = append(calls, *tc)

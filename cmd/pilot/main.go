@@ -3,7 +3,6 @@ package main
 import (
 	"bufio"
 	"context"
-	"flag"
 	"fmt"
 	"os"
 	"os/signal"
@@ -21,24 +20,16 @@ import (
 )
 
 func main() {
-	model := flag.String("model", "", "Model name (default depends on provider)")
-	provider := flag.String("provider", "", "LLM provider: openai (default) or anthropic")
-	flag.Parse()
-
 	rootCtx := context.Background()
 
 	// Set up signal handling: Ctrl+C cancels current operation first, exits on double-tap
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 
-	cfg, err := config.Load(*provider)
+	cfg, err := config.Load("")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
 		os.Exit(1)
-	}
-
-	if *model != "" {
-		cfg.Model = *model
 	}
 
 	client := newClient(cfg.Provider, cfg.APIKey, cfg.Model, cfg.MaxTokens, cfg.BaseURL)

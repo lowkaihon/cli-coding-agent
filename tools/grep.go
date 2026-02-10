@@ -52,8 +52,7 @@ func (r *Registry) grepTool(ctx context.Context, input json.RawMessage) (string,
 		}
 
 		if d.IsDir() {
-			name := d.Name()
-			if name == ".git" || name == "node_modules" || name == ".venv" || name == "__pycache__" {
+			if shouldSkipDir(d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -76,7 +75,6 @@ func (r *Registry) grepTool(ctx context.Context, input json.RawMessage) (string,
 		if err != nil {
 			return nil
 		}
-		defer file.Close()
 
 		rel, _ := filepath.Rel(r.workDir, path)
 		rel = filepath.ToSlash(rel)
@@ -93,6 +91,7 @@ func (r *Registry) grepTool(ctx context.Context, input json.RawMessage) (string,
 				}
 			}
 		}
+		file.Close()
 		return nil
 	})
 
