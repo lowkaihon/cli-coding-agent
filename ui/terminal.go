@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"strings"
 	"sync"
@@ -75,86 +74,16 @@ func (t *Terminal) PrintPrompt() {
 	fmt.Print(t.Prompt())
 }
 
-// ReadLine reads a line of input using raw mode, supporting double-Esc detection
-// for triggering /rewind. Returns the input string, whether a rewind was requested,
-// and any error (io.EOF on Ctrl+D).
-// Falls back to buffered line reading if raw mode is unavailable.
-func (t *Terminal) ReadLine(prompt string) (string, bool, error) {
+// ReadLine reads a line of input using standard buffered I/O.
+// The OS terminal handles line editing (arrow keys, Home/End, backspace).
+func (t *Terminal) ReadLine(prompt string) (string, error) {
 	fmt.Print(prompt)
-
-	rm, err := NewRawMode()
-	if err != nil {
-		return t.readLineFallback()
-	}
-	if err := rm.Enable(); err != nil {
-		return t.readLineFallback()
-	}
-	defer rm.Disable()
-
-	var buf []byte
-	var lastEsc time.Time
-	stopCh := make(chan struct{}) // never closed — ReadKeyContext uses it for cancellation
-
-	for {
-		ch, err := rm.ReadKeyContext(stopCh)
-		if err != nil {
-			// Read error — return what we have
-			if len(buf) > 0 {
-				fmt.Println()
-				return string(buf), false, nil
-			}
-			return "", false, io.EOF
-		}
-
-		switch {
-		case ch == 0x1B: // Esc
-			if !lastEsc.IsZero() && time.Since(lastEsc) < 500*time.Millisecond {
-				// Double-Esc — rewind requested
-				fmt.Println()
-				return "", true, nil
-			}
-			lastEsc = time.Now()
-
-		case ch == 0x0D || ch == 0x0A: // Enter
-			fmt.Println()
-			return strings.TrimSpace(string(buf)), false, nil
-
-		case ch == 0x7F || ch == 0x08: // Backspace
-			if len(buf) > 0 {
-				buf = buf[:len(buf)-1]
-				fmt.Print("\b \b")
-			}
-
-		case ch == 0x03: // Ctrl+C
-			// Clear current line, return empty
-			fmt.Println()
-			return "", false, nil
-
-		case ch == 0x04: // Ctrl+D
-			if len(buf) == 0 {
-				fmt.Println()
-				return "", false, io.EOF
-			}
-			// Ignore Ctrl+D when buffer is non-empty
-
-		case ch >= 0x20 && ch <= 0x7E: // Printable ASCII
-			buf = append(buf, ch)
-			fmt.Print(string(ch))
-
-		default:
-			// Ignore other control characters
-		}
-	}
-}
-
-// readLineFallback reads a line using standard buffered I/O when raw mode is unavailable.
-func (t *Terminal) readLineFallback() (string, bool, error) {
 	reader := bufio.NewReader(os.Stdin)
 	line, err := reader.ReadString('\n')
 	if err != nil {
-		return "", false, err
+		return "", err
 	}
-	return strings.TrimSpace(line), false, nil
+	return strings.TrimSpace(line), nil
 }
 
 // PrintAssistant prints assistant text.

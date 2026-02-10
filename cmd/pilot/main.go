@@ -109,19 +109,11 @@ func main() {
 
 	running := true
 	for running {
-		input, rewind, err := term.ReadLine(term.Prompt())
+		input, err := term.ReadLine(term.Prompt())
 		if err != nil {
 			// EOF (Ctrl+D) or error
 			break
 		}
-
-		if rewind {
-			handleRewind(reader, term, ag, rootCtx)
-			continue
-		}
-
-		// Recreate reader after raw-mode ReadLine to avoid stale buffer
-		reader = bufio.NewReader(os.Stdin)
 
 		if input == "" {
 			continue
