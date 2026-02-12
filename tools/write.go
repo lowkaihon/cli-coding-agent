@@ -13,13 +13,15 @@ type writeInput struct {
 	Content string `json:"content"`
 }
 
-// NeedsConfirmation is an error type that signals the agent should confirm with the user.
+// NeedsConfirmation is returned by write, edit, and bash tools instead of
+// executing immediately. The agent loop type-asserts this error, displays a
+// preview/diff, and calls Execute on user approval.
 type NeedsConfirmation struct {
 	Tool       string
 	Path       string
-	Preview    string // old content (empty for new files)
-	NewContent string // new content (for diff display)
-	Execute    func() (string, error)
+	Preview    string              // old content (empty for new files)
+	NewContent string              // new content (for diff display)
+	Execute    func() (string, error) // deferred action to run on approval
 }
 
 func (e *NeedsConfirmation) Error() string {
@@ -27,9 +29,9 @@ func (e *NeedsConfirmation) Error() string {
 }
 
 func (r *Registry) writeTool(ctx context.Context, input json.RawMessage) (string, error) {
-	var params writeInput
-	if err := json.Unmarshal(input, &params); err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
+	params, err := parseInput[writeInput](input)
+	if err != nil {
+		return "", err
 	}
 	if params.Path == "" {
 		return "", fmt.Errorf("path is required")

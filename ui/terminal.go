@@ -1,3 +1,5 @@
+// Package ui provides terminal output formatting, colorized diffs, user prompts,
+// keyboard interrupt handling, and all user-facing display logic.
 package ui
 
 import (
@@ -206,22 +208,27 @@ func (t *Terminal) PrintModelSwitch(model string) {
 
 // PrintContextUsage prints context usage statistics.
 func (t *Terminal) PrintContextUsage(total, window, threshold, msgCount, systemTokens, toolDefTokens, messageTokens, actualTokens int) {
-	pct := 0.0
-	if window > 0 {
-		pct = float64(total) / float64(window) * 100
-	}
 	fmt.Println(t.c(Bold, "Context Usage"))
-	fmt.Printf("  Tokens: %s / %s (%.1f%%)\n", formatNum(total), formatNum(window), pct)
-	fmt.Printf("  Compact at: %s (80%%)\n", formatNum(threshold))
-	fmt.Println()
-	fmt.Printf("    %s  ~%s tokens\n", t.c(Gray, "System prompt   "), formatNum(systemTokens))
-	fmt.Printf("    %s  ~%s tokens\n", t.c(Yellow, "Tool definitions"), formatNum(toolDefTokens))
-	fmt.Printf("    %s  ~%s tokens\n", t.c(Cyan, fmt.Sprintf("Messages (%d)   ", msgCount)), formatNum(messageTokens))
-	fmt.Println()
 	if actualTokens > 0 {
-		fmt.Printf("    %s  %s tokens (from API)\n", t.c(Green, "Actual usage    "), formatNum(actualTokens))
+		pct := 0.0
+		if window > 0 {
+			pct = float64(actualTokens) / float64(window) * 100
+		}
+		fmt.Printf("  Tokens: %s / %s (%.1f%%)\n", formatNum(actualTokens), formatNum(window), pct)
+		fmt.Printf("  Compact at: %s (80%%)\n", formatNum(threshold))
+		fmt.Printf("  Messages: %d\n", msgCount)
 	} else {
-		fmt.Printf("    %s\n", t.c(Gray, "No API usage data yet"))
+		pct := 0.0
+		if window > 0 {
+			pct = float64(total) / float64(window) * 100
+		}
+		fmt.Printf("  Tokens: ~%s / %s (~%.1f%%)\n", formatNum(total), formatNum(window), pct)
+		fmt.Printf("  Compact at: %s (80%%)\n", formatNum(threshold))
+		fmt.Println()
+		fmt.Printf("    %s\n", t.c(Bold, "Breakdown (estimated):"))
+		fmt.Printf("      %s  ~%s tokens\n", t.c(Gray, "System prompt   "), formatNum(systemTokens))
+		fmt.Printf("      %s  ~%s tokens\n", t.c(Yellow, "Tool definitions"), formatNum(toolDefTokens))
+		fmt.Printf("      %s  ~%s tokens\n", t.c(Cyan, fmt.Sprintf("Messages (%d)   ", msgCount)), formatNum(messageTokens))
 	}
 	fmt.Println()
 }
@@ -240,6 +247,15 @@ func truncate(s string, max int) string {
 	return s[:max-3] + "..."
 }
 
+// Interrupter controls an escape key listener during agent execution.
+type Interrupter interface {
+	Stop()
+	Pause()
+	Resume()
+}
+
+var _ Interrupter = (*InterruptListener)(nil)
+
 // InterruptListener watches for Esc key presses during agent execution
 // and cancels a derived context when detected.
 type InterruptListener struct {
@@ -255,7 +271,7 @@ type InterruptListener struct {
 // Returns the derived context, the listener (for Pause/Resume/Stop), and any error.
 // If raw mode cannot be initialized (e.g., no TTY), returns the original context
 // and a nil listener.
-func (t *Terminal) StartEscapeListener(parent context.Context) (context.Context, *InterruptListener, error) {
+func (t *Terminal) StartEscapeListener(parent context.Context) (context.Context, Interrupter, error) {
 	rm, err := NewRawMode()
 	if err != nil {
 		return parent, nil, err

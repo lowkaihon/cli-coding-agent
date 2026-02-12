@@ -14,9 +14,9 @@ type globInput struct {
 }
 
 func (r *Registry) globTool(ctx context.Context, input json.RawMessage) (string, error) {
-	var params globInput
-	if err := json.Unmarshal(input, &params); err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
+	params, err := parseInput[globInput](input)
+	if err != nil {
+		return "", err
 	}
 	if params.Pattern == "" {
 		return "", fmt.Errorf("pattern is required")
@@ -25,7 +25,7 @@ func (r *Registry) globTool(ctx context.Context, input json.RawMessage) (string,
 	const maxResults = 100
 	var matches []string
 
-	err := filepath.WalkDir(r.workDir, func(path string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(r.workDir, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil // skip errors
 		}

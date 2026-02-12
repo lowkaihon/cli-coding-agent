@@ -16,9 +16,9 @@ type readInput struct {
 }
 
 func (r *Registry) readTool(ctx context.Context, input json.RawMessage) (string, error) {
-	var params readInput
-	if err := json.Unmarshal(input, &params); err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
+	params, err := parseInput[readInput](input)
+	if err != nil {
+		return "", err
 	}
 	if params.Path == "" {
 		return "", fmt.Errorf("path is required")

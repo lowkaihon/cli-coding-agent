@@ -1,3 +1,5 @@
+// Package config handles LLM provider configuration, .env file loading,
+// API key management, and XDG-compliant credential storage.
 package config
 
 import (
@@ -17,6 +19,62 @@ type Config struct {
 	MaxTokens     int
 	BaseURL       string
 	ContextWindow int
+}
+
+// Load resolves LLM configuration by reading .env files, XDG credentials,
+// and prompting for missing API keys. An empty provider defaults to "openai".
+func Load(provider string) (*Config, error) {
+	// Load .env file in cwd if present
+	loadEnvFile(".env")
+
+	// Load credentials from XDG config dir
+	if configDir, err := ConfigDir(); err == nil {
+		loadEnvFile(filepath.Join(configDir, "credentials"))
+	}
+
+	if provider == "" {
+		provider = "openai"
+	}
+
+	var cfg *Config
+	switch provider {
+	case "anthropic":
+		apiKey := os.Getenv("ANTHROPIC_API_KEY")
+		if apiKey == "" {
+			var err error
+			apiKey, err = promptAPIKeyFor("Anthropic", "ANTHROPIC_API_KEY")
+			if err != nil {
+				return nil, err
+			}
+		}
+		cfg = &Config{
+			Provider:      "anthropic",
+			APIKey:        apiKey,
+			Model:         "claude-sonnet-4-5-20250929",
+			MaxTokens:     16384,
+			BaseURL:       "https://api.anthropic.com/v1",
+			ContextWindow: 200000,
+		}
+	default:
+		apiKey := os.Getenv("OPENAI_API_KEY")
+		if apiKey == "" {
+			var err error
+			apiKey, err = promptAPIKeyFor("OpenAI", "OPENAI_API_KEY")
+			if err != nil {
+				return nil, err
+			}
+		}
+		cfg = &Config{
+			Provider:      "openai",
+			APIKey:        apiKey,
+			Model:         "gpt-4o-mini",
+			MaxTokens:     16384,
+			BaseURL:       "https://api.openai.com/v1",
+			ContextWindow: 128000,
+		}
+	}
+
+	return cfg, nil
 }
 
 // KnownModel represents a curated model option.
@@ -70,60 +128,6 @@ func ConfigDir() (string, error) {
 		return "", fmt.Errorf("resolve home dir: %w", err)
 	}
 	return filepath.Join(home, ".config", "pilot"), nil
-}
-
-func Load(provider string) (*Config, error) {
-	// Load .env file in cwd if present
-	loadEnvFile(".env")
-
-	// Load credentials from XDG config dir
-	if configDir, err := ConfigDir(); err == nil {
-		loadEnvFile(filepath.Join(configDir, "credentials"))
-	}
-
-	if provider == "" {
-		provider = "openai"
-	}
-
-	var cfg *Config
-	switch provider {
-	case "anthropic":
-		apiKey := os.Getenv("ANTHROPIC_API_KEY")
-		if apiKey == "" {
-			var err error
-			apiKey, err = promptAPIKeyFor("Anthropic", "ANTHROPIC_API_KEY")
-			if err != nil {
-				return nil, err
-			}
-		}
-		cfg = &Config{
-			Provider:      "anthropic",
-			APIKey:        apiKey,
-			Model:         "claude-sonnet-4-5-20250929",
-			MaxTokens:     16384,
-			BaseURL:       "https://api.anthropic.com/v1",
-			ContextWindow: 200000,
-		}
-	default:
-		apiKey := os.Getenv("OPENAI_API_KEY")
-		if apiKey == "" {
-			var err error
-			apiKey, err = promptAPIKeyFor("OpenAI", "OPENAI_API_KEY")
-			if err != nil {
-				return nil, err
-			}
-		}
-		cfg = &Config{
-			Provider:      "openai",
-			APIKey:        apiKey,
-			Model:         "gpt-4o-mini",
-			MaxTokens:     16384,
-			BaseURL:       "https://api.openai.com/v1",
-			ContextWindow: 128000,
-		}
-	}
-
-	return cfg, nil
 }
 
 // promptAPIKeyFor asks the user for an API key and saves it to the credentials file.

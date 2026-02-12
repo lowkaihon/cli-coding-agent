@@ -1,3 +1,5 @@
+// Package agent implements the agentic loop that orchestrates LLM conversations
+// with tool execution, context management, session persistence, and checkpointing.
 package agent
 
 import (
@@ -15,6 +17,8 @@ import (
 	"github.com/lowkaihon/cli-coding-agent/ui"
 )
 
+// MaxIterationsPerTurn limits the number of LLM round-trips per user message
+// to prevent runaway tool-use loops.
 const MaxIterationsPerTurn = 50
 
 // Agent orchestrates the LLM conversation and tool execution loop.
@@ -29,7 +33,7 @@ type Agent struct {
 	sessionCreated time.Time
 	checkpoints    []Checkpoint              // ordered by turn
 	fileOriginals  map[string]*FileSnapshot  // pre-session state of each modified file
-	term           *ui.Terminal              // stored for sub-agent visibility
+	term           UI                        // stored for sub-agent visibility
 }
 
 // New creates a new Agent with the system prompt initialized.
@@ -60,7 +64,7 @@ func (a *Agent) SetClient(client llm.LLMClient, contextWindow int) {
 }
 
 // Run processes a user message through the agent loop.
-func (a *Agent) Run(ctx context.Context, userMessage string, term *ui.Terminal) error {
+func (a *Agent) Run(ctx context.Context, userMessage string, term UI) error {
 	a.term = term
 	a.messages = append(a.messages, llm.TextMessage("user", userMessage))
 
@@ -69,10 +73,9 @@ func (a *Agent) Run(ctx context.Context, userMessage string, term *ui.Terminal) 
 	if escErr != nil {
 		// No TTY or raw mode unavailable — fall back to parent context
 		opCtx = ctx
+		listener = noopInterrupter{}
 	}
-	if listener != nil {
-		defer listener.Stop()
-	}
+	defer listener.Stop()
 
 	for iteration := 0; iteration < MaxIterationsPerTurn; iteration++ {
 		a.compactIfNeeded(opCtx, term)
@@ -88,11 +91,19 @@ func (a *Agent) Run(ctx context.Context, userMessage string, term *ui.Terminal) 
 			return fmt.Errorf("LLM request failed: %w", err)
 		}
 
-		term.ClearSpinner()
+		spinnerCleared := false
+		clearSpinner := func() {
+			if !spinnerCleared {
+				term.ClearSpinner()
+				spinnerCleared = true
+			}
+		}
 
 		resp, err := llm.AccumulateStream(events, func(text string) {
+			clearSpinner()
 			term.PrintAssistant(text)
 		})
+		clearSpinner() // ensure cleared after stream ends (e.g. tool-only responses)
 		if err != nil {
 			if opCtx.Err() != nil {
 				fmt.Println()
@@ -152,7 +163,7 @@ type toolResult struct {
 }
 
 // executeToolCalls runs tool calls, parallelizing read-only ones.
-func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall, term *ui.Terminal, listener *ui.InterruptListener) []toolResult {
+func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall, term UI, listener ui.Interrupter) []toolResult {
 	results := make([]toolResult, len(calls))
 
 	// Check if all calls are read-only
@@ -226,7 +237,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, calls []llm.ToolCall, term
 	return results
 }
 
-func (a *Agent) handleConfirmation(confirm *tools.NeedsConfirmation, term *ui.Terminal, listener *ui.InterruptListener) string {
+func (a *Agent) handleConfirmation(confirm *tools.NeedsConfirmation, term UI, listener ui.Interrupter) string {
 	switch confirm.Tool {
 	case "write":
 		if confirm.Preview == "" {
@@ -241,16 +252,9 @@ func (a *Agent) handleConfirmation(confirm *tools.NeedsConfirmation, term *ui.Te
 	}
 
 	// Pause raw mode so fmt.Scanln works for y/n input
-	if listener != nil {
-		listener.Pause()
-	}
-
+	listener.Pause()
 	approved := term.ConfirmAction(fmt.Sprintf("Apply %s to %s?", confirm.Tool, confirm.Path))
-
-	// Resume raw mode after confirmation
-	if listener != nil {
-		listener.Resume()
-	}
+	listener.Resume()
 
 	if !approved {
 		return "User denied the operation."
@@ -270,7 +274,7 @@ func (a *Agent) handleConfirmation(confirm *tools.NeedsConfirmation, term *ui.Te
 
 // compactIfNeeded checks if conversation tokens exceed 80% of the context window
 // and, if so, asks the LLM to produce a summary to replace the history.
-func (a *Agent) compactIfNeeded(ctx context.Context, term *ui.Terminal) {
+func (a *Agent) compactIfNeeded(ctx context.Context, term UI) {
 	if a.contextWindow <= 0 {
 		return
 	}
@@ -289,7 +293,7 @@ func (a *Agent) compactIfNeeded(ctx context.Context, term *ui.Terminal) {
 }
 
 // Compact forces an LLM-based compaction of the conversation history.
-func (a *Agent) Compact(ctx context.Context, term *ui.Terminal) error {
+func (a *Agent) Compact(ctx context.Context, term UI) error {
 	if len(a.messages) <= 1 {
 		term.PrintWarning("Nothing to compact.")
 		return nil
@@ -300,7 +304,7 @@ func (a *Agent) Compact(ctx context.Context, term *ui.Terminal) error {
 }
 
 // Clear resets the conversation history to just the system prompt.
-func (a *Agent) Clear(term *ui.Terminal) {
+func (a *Agent) Clear(term UI) {
 	a.messages = []llm.Message{a.messages[0]}
 	a.checkpoints = nil
 	a.lastTokensUsed = 0
@@ -308,7 +312,7 @@ func (a *Agent) Clear(term *ui.Terminal) {
 }
 
 // doCompact performs the actual LLM-based compaction.
-func (a *Agent) doCompact(ctx context.Context, term *ui.Terminal) {
+func (a *Agent) doCompact(ctx context.Context, term UI) {
 	history := serializeHistory(a.messages)
 	compactMessages := []llm.Message{
 		llm.TextMessage("system", compactionPrompt()),

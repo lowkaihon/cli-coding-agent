@@ -18,9 +18,9 @@ type grepInput struct {
 }
 
 func (r *Registry) grepTool(ctx context.Context, input json.RawMessage) (string, error) {
-	var params grepInput
-	if err := json.Unmarshal(input, &params); err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
+	params, err := parseInput[grepInput](input)
+	if err != nil {
+		return "", err
 	}
 	if params.Pattern == "" {
 		return "", fmt.Errorf("pattern is required")
@@ -75,6 +75,7 @@ func (r *Registry) grepTool(ctx context.Context, input json.RawMessage) (string,
 		if err != nil {
 			return nil
 		}
+		defer file.Close()
 
 		rel, _ := filepath.Rel(r.workDir, path)
 		rel = filepath.ToSlash(rel)
@@ -91,7 +92,6 @@ func (r *Registry) grepTool(ctx context.Context, input json.RawMessage) (string,
 				}
 			}
 		}
-		file.Close()
 		return nil
 	})
 

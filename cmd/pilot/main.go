@@ -1,3 +1,5 @@
+// Pilot is a terminal-based AI coding agent that provides a REPL interface
+// for interactive conversations with LLM-powered tool execution.
 package main
 
 import (

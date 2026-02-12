@@ -22,9 +22,9 @@ const (
 )
 
 func (r *Registry) bashTool(ctx context.Context, input json.RawMessage) (string, error) {
-	var params bashInput
-	if err := json.Unmarshal(input, &params); err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
+	params, err := parseInput[bashInput](input)
+	if err != nil {
+		return "", err
 	}
 	if params.Command == "" {
 		return "", fmt.Errorf("command is required")

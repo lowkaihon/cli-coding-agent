@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -119,6 +120,7 @@ func convertToResponsesInput(messages []Message) (string, []json.RawMessage) {
 			instructions = msg.ContentString()
 
 		case "user", "developer":
+			// json.Marshal cannot fail on plain string fields
 			data, _ := json.Marshal(responsesMessageInput{
 				Role:    msg.Role,
 				Content: msg.ContentString(),
@@ -174,7 +176,7 @@ func convertResponsesToolDefs(tools []ToolDef) []responsesTool {
 
 // convertResponsesResponse converts the API response to internal Response format.
 func convertResponsesResponse(resp responsesResponse) *Response {
-	var content string
+	var content strings.Builder
 	var toolCalls []ToolCall
 
 	for _, item := range resp.Output {
@@ -182,7 +184,7 @@ func convertResponsesResponse(resp responsesResponse) *Response {
 		case "message":
 			for _, c := range item.Content {
 				if c.Type == "output_text" {
-					content += c.Text
+					content.WriteString(c.Text)
 				}
 			}
 		case "function_call":
@@ -198,8 +200,9 @@ func convertResponsesResponse(resp responsesResponse) *Response {
 	}
 
 	var contentPtr *string
-	if content != "" {
-		contentPtr = &content
+	if content.Len() > 0 {
+		s := content.String()
+		contentPtr = &s
 	}
 
 	finishReason := "stop"

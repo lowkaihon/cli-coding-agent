@@ -1,3 +1,5 @@
+// Package llm provides an abstract LLM client interface with OpenAI and Anthropic
+// implementations, streaming support, and automatic retry with exponential backoff.
 package llm
 
 import (

@@ -46,7 +46,7 @@ type anthropicRequest struct {
 
 type anthropicMessage struct {
 	Role    string      `json:"role"`
-	Content interface{} `json:"content"` // string or []anthropicContentBlock
+	Content any `json:"content"` // string or []anthropicContentBlock
 }
 
 type anthropicContentBlock struct {
@@ -212,6 +212,7 @@ func (c *AnthropicClient) convertResponse(resp anthropicResponse) *Response {
 		case "text":
 			content.WriteString(block.Text)
 		case "tool_use":
+			// json.Marshal of json.RawMessage is a passthrough and cannot fail
 			args, _ := json.Marshal(block.Input)
 			if args == nil {
 				args = []byte("{}")

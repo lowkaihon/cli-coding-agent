@@ -1,3 +1,5 @@
+// Package tools provides the tool registry and implementations for file operations,
+// shell execution, and codebase exploration, with path sandboxing for security.
 package tools
 
 import (

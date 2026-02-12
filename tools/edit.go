@@ -15,9 +15,9 @@ type editInput struct {
 }
 
 func (r *Registry) editTool(ctx context.Context, input json.RawMessage) (string, error) {
-	var params editInput
-	if err := json.Unmarshal(input, &params); err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
+	params, err := parseInput[editInput](input)
+	if err != nil {
+		return "", err
 	}
 	if params.Path == "" {
 		return "", fmt.Errorf("path is required")

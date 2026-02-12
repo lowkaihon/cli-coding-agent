@@ -21,9 +21,9 @@ type exploreInput struct {
 }
 
 func (r *Registry) exploreTool(ctx context.Context, input json.RawMessage) (string, error) {
-	var params exploreInput
-	if err := json.Unmarshal(input, &params); err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
+	params, err := parseInput[exploreInput](input)
+	if err != nil {
+		return "", err
 	}
 	if params.Task == "" {
 		return "", fmt.Errorf("task is required")

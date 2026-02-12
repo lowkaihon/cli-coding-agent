@@ -13,9 +13,9 @@ type lsInput struct {
 }
 
 func (r *Registry) lsTool(ctx context.Context, input json.RawMessage) (string, error) {
-	var params lsInput
-	if err := json.Unmarshal(input, &params); err != nil {
-		return "", fmt.Errorf("invalid input: %w", err)
+	params, err := parseInput[lsInput](input)
+	if err != nil {
+		return "", err
 	}
 
 	dir := r.workDir

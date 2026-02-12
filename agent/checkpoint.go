@@ -7,30 +7,7 @@ import (
 	"time"
 
 	"github.com/lowkaihon/cli-coding-agent/llm"
-	"github.com/lowkaihon/cli-coding-agent/ui"
 )
-
-// FileSnapshot records a file's state before it was first modified in this session.
-type FileSnapshot struct {
-	Existed bool   // true if file existed before first modification
-	Content []byte // content before first modification (nil if didn't exist)
-}
-
-// Checkpoint captures conversation and file state at the start of a user turn.
-type Checkpoint struct {
-	Turn      int              // 1-based turn number
-	Timestamp time.Time
-	Preview   string           // user message, truncated to 100 chars
-	MsgIndex  int              // len(a.messages) at checkpoint creation
-	Files     map[string][]byte // filepath → content at this checkpoint (nil = didn't exist)
-}
-
-// CheckpointItem is a lightweight view of a checkpoint for UI display.
-type CheckpointItem struct {
-	Turn      int
-	Timestamp time.Time
-	Preview   string
-}
 
 // CreateCheckpoint saves a checkpoint before a user turn begins.
 func (a *Agent) CreateCheckpoint(userMessage string) {
@@ -57,6 +34,28 @@ func (a *Agent) CreateCheckpoint(userMessage string) {
 		MsgIndex:  len(a.messages),
 		Files:     files,
 	})
+}
+
+// FileSnapshot records a file's state before it was first modified in this session.
+type FileSnapshot struct {
+	Existed bool   // true if file existed before first modification
+	Content []byte // content before first modification (nil if didn't exist)
+}
+
+// Checkpoint captures conversation and file state at the start of a user turn.
+type Checkpoint struct {
+	Turn      int              // 1-based turn number
+	Timestamp time.Time
+	Preview   string           // user message, truncated to 100 chars
+	MsgIndex  int              // len(a.messages) at checkpoint creation
+	Files     map[string][]byte // filepath → content at this checkpoint (nil = didn't exist)
+}
+
+// CheckpointItem is a lightweight view of a checkpoint for UI display.
+type CheckpointItem struct {
+	Turn      int
+	Timestamp time.Time
+	Preview   string
 }
 
 // captureFileBeforeModification records a file's pre-session state the first
@@ -178,7 +177,7 @@ func (a *Agent) RewindAll(turn int) error {
 
 // SummarizeFrom keeps messages before the checkpoint intact and replaces
 // messages from the checkpoint onward with an LLM-generated summary.
-func (a *Agent) SummarizeFrom(ctx context.Context, turn int, term *ui.Terminal) error {
+func (a *Agent) SummarizeFrom(ctx context.Context, turn int, term UI) error {
 	if turn < 1 || turn > len(a.checkpoints) {
 		return fmt.Errorf("invalid checkpoint turn: %d", turn)
 	}
