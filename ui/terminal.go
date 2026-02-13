@@ -173,6 +173,7 @@ func (t *Terminal) PrintHelp() {
 	fmt.Println(t.c(Cyan, "  /compact") + " Compact conversation (LLM summarizes history)")
 	fmt.Println(t.c(Cyan, "  /clear  ") + " Clear conversation history")
 	fmt.Println(t.c(Cyan, "  /context") + " Show context window usage")
+	fmt.Println(t.c(Cyan, "  /tasks  ") + " Show current task list")
 	fmt.Println(t.c(Cyan, "  /resume ") + " Resume a previous session")
 	fmt.Println(t.c(Cyan, "  /rewind ") + " Rewind to a previous checkpoint")
 	fmt.Println(t.c(Cyan, "  /quit   ") + " Exit Pilot")
@@ -475,6 +476,40 @@ func (t *Terminal) PrintConversationHistory(messages []llm.Message) {
 		}
 	}
 	fmt.Println(t.c(Gray, "--- End of history ---"))
+	fmt.Println()
+}
+
+// TaskListItem represents a task entry for display.
+type TaskListItem struct {
+	ID         int
+	Content    string
+	Status     string
+	ActiveForm string
+}
+
+// PrintTaskList displays the current task list grouped by status.
+func (t *Terminal) PrintTaskList(tasks []TaskListItem) {
+	fmt.Println(t.c(Bold, "Tasks"))
+
+	pending, inProgress, completed := 0, 0, 0
+	for _, task := range tasks {
+		var marker string
+		switch task.Status {
+		case "in_progress":
+			inProgress++
+			marker = t.c(Yellow, "● ")
+		case "completed":
+			completed++
+			marker = t.c(Green, "✓ ")
+		default:
+			pending++
+			marker = t.c(Cyan, "○ ")
+		}
+		fmt.Printf("  %s%s %s\n", marker, t.c(Gray, fmt.Sprintf("[%d]", task.ID)), task.Content)
+	}
+	fmt.Println()
+	fmt.Printf("  %d tasks (%d pending, %d in progress, %d completed)\n",
+		len(tasks), pending, inProgress, completed)
 	fmt.Println()
 }
 

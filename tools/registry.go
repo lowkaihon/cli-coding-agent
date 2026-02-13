@@ -21,9 +21,10 @@ type toolEntry struct {
 
 // Registry holds all available tools and dispatches execution.
 type Registry struct {
-	tools       []toolEntry
-	workDir     string
-	exploreFunc ExploreFunc
+	tools         []toolEntry
+	workDir       string
+	exploreFunc   ExploreFunc
+	taskCallbacks TaskCallbacks
 }
 
 // NewRegistry creates a registry and registers all built-in tools.
@@ -61,7 +62,7 @@ func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessa
 // IsReadOnly returns true for tools that don't modify the filesystem.
 func (r *Registry) IsReadOnly(name string) bool {
 	switch name {
-	case "glob", "grep", "ls", "read", "explore":
+	case "glob", "grep", "ls", "read", "explore", "write_tasks", "update_task", "read_tasks":
 		return true
 	default:
 		return false
@@ -155,8 +156,69 @@ func (r *Registry) registerReadOnlyTools() {
 	)
 }
 
+func (r *Registry) registerTaskTools() {
+	r.register("write_tasks",
+		`Create or replace the task list for planning multi-step work. Takes an array of tasks, each with a content string (imperative form, e.g. "Add auth middleware") and an optional active_form string (continuous form, e.g. "Adding auth middleware"). All tasks start as pending. Use this before starting complex work to plan your approach. Returns the formatted task list.`,
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"tasks": {
+					"type": "array",
+					"items": {
+						"type": "object",
+						"properties": {
+							"content": {
+								"type": "string",
+								"description": "Task description in imperative form (e.g. 'Add auth middleware')"
+							},
+							"active_form": {
+								"type": "string",
+								"description": "Task description in continuous form (e.g. 'Adding auth middleware')"
+							}
+						},
+						"required": ["content"]
+					},
+					"description": "Array of tasks to create"
+				}
+			},
+			"required": ["tasks"]
+		}`),
+		r.writeTasksTool,
+	)
+
+	r.register("update_task",
+		`Update the status of a task by ID. Valid statuses: pending, in_progress, completed. Mark tasks in_progress when you start working on them and completed when done. Returns the updated task list.`,
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {
+				"id": {
+					"type": "integer",
+					"description": "Task ID to update"
+				},
+				"status": {
+					"type": "string",
+					"enum": ["pending", "in_progress", "completed"],
+					"description": "New status for the task"
+				}
+			},
+			"required": ["id", "status"]
+		}`),
+		r.updateTaskTool,
+	)
+
+	r.register("read_tasks",
+		`Read the current task list. Returns all tasks with their IDs, content, and status. Use this to check progress or remind yourself of the plan.`,
+		json.RawMessage(`{
+			"type": "object",
+			"properties": {}
+		}`),
+		r.readTasksTool,
+	)
+}
+
 func (r *Registry) registerBuiltins() {
 	r.registerReadOnlyTools()
+	r.registerTaskTools()
 
 	r.register("write",
 		`Create or overwrite a file with the given content. Creates parent directories if needed. User confirmation required. ALWAYS prefer editing existing files over writing new ones — use the edit tool to modify existing files. Never proactively create documentation files (*.md) or README files unless explicitly requested.`,

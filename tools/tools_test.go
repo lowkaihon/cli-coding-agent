@@ -308,7 +308,7 @@ func TestBashToolNeedsConfirmation(t *testing.T) {
 func TestIsReadOnly(t *testing.T) {
 	r := NewRegistry(t.TempDir())
 
-	readOnlyTools := []string{"glob", "grep", "ls", "read"}
+	readOnlyTools := []string{"glob", "grep", "ls", "read", "write_tasks", "update_task", "read_tasks"}
 	for _, name := range readOnlyTools {
 		if !r.IsReadOnly(name) {
 			t.Errorf("expected %s to be read-only", name)

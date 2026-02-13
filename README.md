@@ -31,7 +31,8 @@ User input
   LLM Client     Tool Registry
   (OpenAI or     (glob, grep, ls,
    Anthropic)     read, write, edit,
-                  bash, explore)
+                  bash, explore,
+                  + task planning)
                        │
                        ▼
                  Explore Sub-Agent
@@ -47,7 +48,7 @@ User input
 | `cmd/pilot` | CLI entrypoint, REPL, signal handling | agent, config, llm, tools, ui |
 | `agent` | Agent loop, compaction, checkpoints, sessions | llm, tools, ui |
 | `llm` | LLM client interface, OpenAI + Anthropic, streaming, retry | — |
-| `tools` | Tool registry, 8 tool implementations, path security | llm (types only) |
+| `tools` | Tool registry, 11 tool implementations, path security | llm (types only) |
 | `config` | API key management, .env loading, provider defaults | — |
 | `ui` | Terminal output, colors, diffs, raw mode (cross-platform) | llm (types only) |
 
@@ -71,14 +72,17 @@ User input
 
 **Session persistence & checkpoints** — Conversations auto-save to `.pilot/` as JSON. `/resume` reloads a previous session. Each turn creates a checkpoint with file snapshots, and `/rewind` can restore code, conversation, or both to any checkpoint.
 
+**Task-based planning** — Three tools (`write_tasks`, `update_task`, `read_tasks`) let the LLM plan multi-step work by creating and tracking a task list. Tasks are stored outside the message history, persist in sessions, and survive context compaction. The system prompt instructs the LLM to create tasks before complex work and skip them for simple requests. Callbacks are injected via `SetTaskCallbacks()` following the same pattern as `SetExploreFunc()`.
+
 ## Features
 
 - **Agentic tool-use loop** — the LLM decides which tools to call, executes them, and iterates until done
 - **Streaming responses** — real-time token output via SSE
-- **8 built-in tools** — glob, grep, ls, read, write, edit, bash, explore
+- **11 built-in tools** — glob, grep, ls, read, write, edit, bash, explore, + task planning (write_tasks, update_task, read_tasks)
 - **Multi-provider** — OpenAI (Responses API) and Anthropic (Messages API), switchable at runtime via `/model`
 - **Persistent memory** — project-scoped knowledge in `MEMORY.md`, injected into the system prompt
 - **Session persistence** — auto-save conversations, resume previous sessions
+- **Task-based planning** — LLM creates task lists for complex work, tracks progress via tools
 - **Checkpoints & rewind** — restore code, conversation, or both to any previous turn
 - **Context compaction** — LLM-based semantic summarization when approaching limits
 - **Concurrent read-only tools** — parallel execution via goroutines
@@ -97,6 +101,9 @@ User input
 | `edit` | Replace exact string match in a file (requires confirmation) |
 | `bash` | Execute shell commands (requires confirmation, 30s timeout) |
 | `explore` | Spawn read-only sub-agent to research codebase |
+| `write_tasks` | Create/replace task list for planning multi-step work |
+| `update_task` | Update task status (pending → in_progress → completed) |
+| `read_tasks` | Read current task list |
 
 ## Commands
 
@@ -107,6 +114,7 @@ User input
 | `/compact` | Force conversation compaction |
 | `/clear` | Clear conversation history |
 | `/context` | Show context window usage |
+| `/tasks` | Show current task list |
 | `/resume` | Resume a previously saved session |
 | `/rewind` | Rewind to a previous checkpoint |
 | `/quit` | Exit Pilot |
@@ -159,6 +167,7 @@ cli-coding-agent/
 │   ├── context.go                  # Token estimation, compaction prompt
 │   ├── checkpoint.go               # Checkpoint creation and rewind
 │   ├── session.go                  # Session persistence (save/load/resume)
+│   ├── task.go                    # Task type, planning state management
 │   ├── messages.go                 # Message history accessor
 │   ├── agent_test.go               # Agent loop + compaction tests
 │   ├── checkpoint_test.go          # Checkpoint tests
@@ -186,6 +195,7 @@ cli-coding-agent/
 │   ├── edit.go                     # Edit tool (exact string replacement)
 │   ├── bash.go                     # Bash tool (sandboxed shell execution)
 │   ├── explore.go                  # Explore tool + read-only registry
+│   ├── task.go                    # Task planning tools (write_tasks, update_task, read_tasks)
 │   └── tools_test.go              # Tool tests (all tools + path validation)
 ├── config/
 │   ├── config.go                   # Provider config, .env loading, API key prompting

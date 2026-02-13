@@ -26,6 +26,7 @@ type SessionMeta struct {
 type SessionFile struct {
 	Meta     SessionMeta   `json:"meta"`
 	Messages []llm.Message `json:"messages"`
+	Tasks    []Task        `json:"tasks,omitempty"`
 }
 
 func generateSessionID() string {
@@ -78,6 +79,7 @@ func (a *Agent) SaveSession() error {
 			MsgCount:  len(saved),
 		},
 		Messages: saved,
+		Tasks:    a.tasks,
 	}
 
 	data, err := json.Marshal(sf)
@@ -133,6 +135,7 @@ func (a *Agent) ResumeSession(sessionID string) error {
 	a.messages = append(a.messages, sf.Messages...)
 	a.sessionID = sf.Meta.ID
 	a.sessionCreated = sf.Meta.CreatedAt
+	a.tasks = sf.Tasks
 	a.lastTokensUsed = 0
 	a.rebuildCheckpoints()
 	return nil

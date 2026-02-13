@@ -19,7 +19,7 @@ Pilot is a terminal-based AI coding agent. The main loop is a REPL that passes u
 
 ```
 cmd/pilot/main.go (REPL + slash commands + signal handling)
-  → /help, /model, /compact, /clear, /context, /resume, /rewind, /quit handled directly
+  → /help, /model, /compact, /clear, /context, /tasks, /resume, /rewind, /quit handled directly
   → agent.CreateCheckpoint()           — snapshot files + conversation before each turn
   → agent.Agent.Run()
       → StartEscapeListener()          — wrap context with Esc key cancellation
@@ -52,7 +52,7 @@ cmd/pilot/main.go (REPL + slash commands + signal handling)
 
 **`tools.AtomicWrite()`** — Shared by write and edit tools. Writes to a temp file in the same directory, then `os.Rename` for atomicity.
 
-**Tool registry is an ordered slice** — Not a map. Registration order (glob → grep → ls → read → write → edit → bash → explore) is deterministic, which affects LLM behavior.
+**Tool registry is an ordered slice** — Not a map. Registration order (glob → grep → ls → read → write_tasks → update_task → read_tasks → write → edit → bash → explore) is deterministic, which affects LLM behavior.
 
 **Explore sub-agent** — The `explore` tool spawns a child agent with a read-only tool registry (glob, grep, ls, read). Uses non-streaming `SendMessage()` to avoid terminal output conflicts, up to 30 iterations. Callback injected via `SetExploreFunc()` to break circular dependency between agent and tools packages.
 
@@ -67,6 +67,26 @@ cmd/pilot/main.go (REPL + slash commands + signal handling)
 **Persistent memory** — `systemPrompt()` in `agent/agent.go` reads `MEMORY.md` from the working directory and appends its contents to the system prompt. No dedicated "remember" tool; the LLM uses `edit` on MEMORY.md directly.
 
 **Session persistence & checkpoints** — Sessions auto-save to `~/.pilot/projects/<hash>/sessions/` as JSON (`agent/session.go`), where `<hash>` is a SHA256 prefix of the project's absolute path. `CreateCheckpoint()` snapshots conversation + modified files before each turn (`agent/checkpoint.go`). `captureFileBeforeModification()` populates `fileOriginals` map before write/edit execution. `/rewind` offers: restore code+conversation, conversation only, code only, or summarize-from via `SummarizeFrom()`. On `/resume`, `rebuildCheckpoints()` reconstructs checkpoint entries from the restored message history (conversation-only — no file snapshots).
+
+**Task-based planning** — Three tools (`write_tasks`, `update_task`, `read_tasks`) let the LLM plan multi-step work. Tasks are stored on `Agent.tasks` (not in messages), persist in sessions via `SessionFile.Tasks`, and survive context compaction. Callbacks injected via `SetTaskCallbacks()` following the `ExploreFunc` pattern. `/tasks` slash command shows the current list. System prompt instructs the LLM to create tasks before complex work.
+
+## Go Style Conventions
+
+Follow [Effective Go](https://go.dev/doc/effective_go), [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments), and [Twelve Go Best Practices](https://go.dev/talks/2013/bestpractices.slide). Project-specific conventions:
+
+- **Error strings** — Lowercase, no trailing punctuation: `fmt.Errorf("resolve home dir: %w", err)`. Wrap with `%w` for error chains.
+- **Receiver names** — One or two letters from the type initial, consistent across all methods: `a` for Agent, `t` for Terminal, `r` for Registry, `c` for clients. Never `self`, `this`, or `me`.
+- **Empty slices** — `var t []string` (nil) when appending later; `make([]T, n)` when length/capacity is known.
+- **Imports** — stdlib first, blank line, then project imports. Alphabetical within each group.
+- **Comments** — All exported symbols get doc comments starting with the symbol name, ending with a period. Unexported helpers only need comments when the logic is non-obvious.
+- **Error flow** — Handle errors first with early returns; keep the happy path at minimal indentation.
+- **`any` over `interface{}`** — Use the Go 1.18+ `any` alias everywhere.
+- **Defer for cleanup** — Always `defer f.Close()` immediately after acquiring a resource. No manual cleanup in the happy path.
+- **Named returns** — Avoid unless returning multiple values of the same type where names add documentation value.
+- **Context** — Always the first parameter: `func Foo(ctx context.Context, ...)`.
+- **Tool input parsing** — All tool functions use `parseInput[T](input)` from `tools/parse.go` to unmarshal JSON input. Per-field validation (e.g., "path is required") stays in each tool function.
+- **Accept interfaces, return structs** — Functions accept interface parameters (`UI`, `LLMClient`) and return concrete types (`*Agent`, `*Registry`). Define interfaces in the consumer package (`agent.UI`), not the provider. Exception: `ui.Interrupter` lives in `ui` because multiple packages need it.
+- **Important code first** — Order declarations: package doc → exports (constructors, key functions, types) → unexported helpers. Example: `config.go` orders `Config` → `Load()` → helper types → private functions.
 
 ## Context Management
 
@@ -103,6 +123,6 @@ OpenAI uses Responses API; Anthropic uses Messages API. Key differences handled 
 
 ## Concurrent Tool Execution
 
-When the LLM returns multiple tool calls, Pilot checks if all are read-only (glob, grep, ls, read, explore). If so, they execute concurrently via goroutines with `sync.WaitGroup`. Results are collected into a pre-allocated slice indexed by position — no mutex needed.
+When the LLM returns multiple tool calls, Pilot checks if all are read-only (glob, grep, ls, read, explore, write_tasks, update_task, read_tasks). If so, they execute concurrently via goroutines with `sync.WaitGroup`. Results are collected into a pre-allocated slice indexed by position — no mutex needed.
 
 Write tools (write, edit, bash) execute sequentially because they return `NeedsConfirmation` errors requiring interactive user input. The `explore` sub-agent also runs read-only tools concurrently internally.

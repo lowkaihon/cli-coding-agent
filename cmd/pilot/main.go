@@ -148,6 +148,8 @@ func main() {
 			term.PrintContextUsage(s.TotalTokens, s.ContextWindow, s.Threshold,
 				s.MessageCount, s.SystemTokens, s.ToolDefTokens,
 				s.MessageTokens, s.ActualTokens)
+		case "/tasks":
+			handleTasks(ag, term)
 		case "/rewind":
 			handleRewind(reader, term, ag, rootCtx)
 		default:
@@ -425,4 +427,22 @@ func handleRewind(reader *bufio.Reader, term *ui.Terminal, ag *agent.Agent, ctx 
 	default:
 		term.PrintWarning("Invalid action.")
 	}
+}
+
+func handleTasks(ag *agent.Agent, term *ui.Terminal) {
+	tasks := ag.Tasks()
+	if len(tasks) == 0 {
+		term.PrintWarning("No tasks. The LLM creates tasks with write_tasks during complex work.")
+		return
+	}
+	items := make([]ui.TaskListItem, len(tasks))
+	for i, t := range tasks {
+		items[i] = ui.TaskListItem{
+			ID:         t.ID,
+			Content:    t.Content,
+			Status:     t.Status,
+			ActiveForm: t.ActiveForm,
+		}
+	}
+	term.PrintTaskList(items)
 }

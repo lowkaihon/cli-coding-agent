@@ -33,6 +33,7 @@ type Agent struct {
 	sessionCreated time.Time
 	checkpoints    []Checkpoint              // ordered by turn
 	fileOriginals  map[string]*FileSnapshot  // pre-session state of each modified file
+	tasks          []Task                    // tracked work items for planning
 	term           UI                        // stored for sub-agent visibility
 }
 
@@ -53,6 +54,13 @@ func New(client llm.LLMClient, registry *tools.Registry, workDir string, context
 
 	// Wire the explore sub-agent callback into the tool registry
 	registry.SetExploreFunc(a.runExplore)
+
+	// Wire task callbacks into the tool registry
+	registry.SetTaskCallbacks(tools.TaskCallbacks{
+		WriteTasks: a.WriteTasks,
+		UpdateTask: a.UpdateTask,
+		ReadTasks:  a.TaskSummary,
+	})
 
 	return a
 }
@@ -551,6 +559,23 @@ To persist important context (conventions, architecture decisions, gotchas), use
 	if data, err := os.ReadFile(memoryPath); err == nil && len(data) > 0 {
 		sb.WriteString("\n## Project Memory (MEMORY.md)\n\n")
 		sb.WriteString(string(data))
+		sb.WriteString("\n")
+	}
+
+	// Task planning instructions
+	sb.WriteString(`
+# Task Planning
+
+You have task tools (write_tasks, update_task, read_tasks) to plan and track work.
+For complex multi-step tasks, ALWAYS create a task list before making changes.
+Keep task lists focused (3-8 items). Mark tasks in_progress before starting, completed when done.
+For simple single-step tasks, skip task tracking and act directly.
+`)
+
+	// Inject current tasks if any exist
+	if len(a.tasks) > 0 {
+		sb.WriteString("\n## Current Tasks\n\n")
+		sb.WriteString(a.TaskSummary())
 		sb.WriteString("\n")
 	}
 
