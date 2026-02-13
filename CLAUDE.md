@@ -68,6 +68,24 @@ cmd/pilot/main.go (REPL + slash commands + signal handling)
 
 **Session persistence & checkpoints** — Sessions auto-save to `~/.pilot/projects/<hash>/sessions/` as JSON (`agent/session.go`), where `<hash>` is a SHA256 prefix of the project's absolute path. `CreateCheckpoint()` snapshots conversation + modified files before each turn (`agent/checkpoint.go`). `captureFileBeforeModification()` populates `fileOriginals` map before write/edit execution. `/rewind` offers: restore code+conversation, conversation only, code only, or summarize-from via `SummarizeFrom()`. On `/resume`, `rebuildCheckpoints()` reconstructs checkpoint entries from the restored message history (conversation-only — no file snapshots).
 
+## Go Style Conventions
+
+Follow [Effective Go](https://go.dev/doc/effective_go), [Go Code Review Comments](https://go.dev/wiki/CodeReviewComments), and [Twelve Go Best Practices](https://go.dev/talks/2013/bestpractices.slide). Project-specific conventions:
+
+- **Error strings** — Lowercase, no trailing punctuation: `fmt.Errorf("resolve home dir: %w", err)`. Wrap with `%w` for error chains.
+- **Receiver names** — One or two letters from the type initial, consistent across all methods: `a` for Agent, `t` for Terminal, `r` for Registry, `c` for clients. Never `self`, `this`, or `me`.
+- **Empty slices** — `var t []string` (nil) when appending later; `make([]T, n)` when length/capacity is known.
+- **Imports** — stdlib first, blank line, then project imports. Alphabetical within each group.
+- **Comments** — All exported symbols get doc comments starting with the symbol name, ending with a period. Unexported helpers only need comments when the logic is non-obvious.
+- **Error flow** — Handle errors first with early returns; keep the happy path at minimal indentation.
+- **`any` over `interface{}`** — Use the Go 1.18+ `any` alias everywhere.
+- **Defer for cleanup** — Always `defer f.Close()` immediately after acquiring a resource. No manual cleanup in the happy path.
+- **Named returns** — Avoid unless returning multiple values of the same type where names add documentation value.
+- **Context** — Always the first parameter: `func Foo(ctx context.Context, ...)`.
+- **Tool input parsing** — All tool functions use `parseInput[T](input)` from `tools/parse.go` to unmarshal JSON input. Per-field validation (e.g., "path is required") stays in each tool function.
+- **Accept interfaces, return structs** — Functions accept interface parameters (`UI`, `LLMClient`) and return concrete types (`*Agent`, `*Registry`). Define interfaces in the consumer package (`agent.UI`), not the provider. Exception: `ui.Interrupter` lives in `ui` because multiple packages need it.
+- **Important code first** — Order declarations: package doc → exports (constructors, key functions, types) → unexported helpers. Example: `config.go` orders `Config` → `Load()` → helper types → private functions.
+
 ## Context Management
 
 Auto-compacts at 80% of context window (`ContextBuffer = 0.2`). Uses API-reported `TotalTokens` (`lastTokensUsed`), falling back to chars/4 heuristic (`EstimateTokens` in `agent/context.go`).

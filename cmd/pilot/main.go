@@ -294,7 +294,7 @@ func handleModelSwitch(reader *bufio.Reader, term *ui.Terminal, ag *agent.Agent,
 		return
 	}
 
-	baseURL, maxTokens, contextWindow := config.ProviderDefaults(selectedProvider)
+	baseURL, maxTokens, contextWindow := config.ProviderDefaults(selectedProvider, selectedModel)
 	client := newClient(selectedProvider, apiKey, selectedModel, maxTokens, baseURL)
 	ag.SetClient(client, contextWindow)
 	*currentModel = selectedModel
