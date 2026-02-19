@@ -68,7 +68,7 @@ cmd/pilot/main.go (REPL + slash commands + signal handling)
 
 **Session persistence & checkpoints** — Sessions auto-save to `~/.pilot/projects/<hash>/sessions/` as JSON (`agent/session.go`), where `<hash>` is a SHA256 prefix of the project's absolute path. `CreateCheckpoint()` snapshots conversation + modified files before each turn (`agent/checkpoint.go`). `captureFileBeforeModification()` populates `fileOriginals` map before write/edit execution. `/rewind` offers: restore code+conversation, conversation only, code only, or summarize-from via `SummarizeFrom()`. On `/resume`, `rebuildCheckpoints()` reconstructs checkpoint entries from the restored message history (conversation-only — no file snapshots).
 
-**Task-based planning** — Three tools (`write_tasks`, `update_task`, `read_tasks`) let the LLM plan multi-step work. Tasks are stored on `Agent.tasks` (not in messages), persist in sessions via `SessionFile.Tasks`, and survive context compaction. Callbacks injected via `SetTaskCallbacks()` following the `ExploreFunc` pattern. `/tasks` slash command shows the current list. System prompt instructs the LLM to create tasks before complex work.
+**Task-based planning** — Three tools (`write_tasks`, `update_task`, `read_tasks`) let the LLM plan multi-step work. Each task has a `content` (title) and `description` (detailed implementation steps). `write_tasks` returns `NeedsConfirmation` — the user sees and approves the plan before tasks are stored. Tasks live on `Agent.tasks` (not in messages), persist in sessions via `SessionFile.Tasks`, and survive context compaction. Task state is injected into the system prompt automatically; `read_tasks` is rarely needed. Callbacks injected via `SetTaskCallbacks()` following the `ExploreFunc` pattern. `/tasks` slash command shows the current list.
 
 ## Go Style Conventions
 
@@ -123,6 +123,6 @@ OpenAI uses Responses API; Anthropic uses Messages API. Key differences handled 
 
 ## Concurrent Tool Execution
 
-When the LLM returns multiple tool calls, Pilot checks if all are read-only (glob, grep, ls, read, explore, write_tasks, update_task, read_tasks). If so, they execute concurrently via goroutines with `sync.WaitGroup`. Results are collected into a pre-allocated slice indexed by position — no mutex needed.
+When the LLM returns multiple tool calls, Pilot checks if all are read-only (glob, grep, ls, read, explore, update_task, read_tasks). If so, they execute concurrently via goroutines with `sync.WaitGroup`. Results are collected into a pre-allocated slice indexed by position — no mutex needed.
 
 Write tools (write, edit, bash) execute sequentially because they return `NeedsConfirmation` errors requiring interactive user input. The `explore` sub-agent also runs read-only tools concurrently internally.

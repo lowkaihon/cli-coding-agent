@@ -94,7 +94,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string, term UI) error {
 			term.ClearSpinner()
 			if opCtx.Err() != nil {
 				fmt.Println()
-				return context.Canceled
+				return fmt.Errorf("cancelled: %w", err)
 			}
 			return fmt.Errorf("LLM request failed: %w", err)
 		}
@@ -115,7 +115,7 @@ func (a *Agent) Run(ctx context.Context, userMessage string, term UI) error {
 		if err != nil {
 			if opCtx.Err() != nil {
 				fmt.Println()
-				return context.Canceled
+				return fmt.Errorf("cancelled: %w", err)
 			}
 			return fmt.Errorf("stream error: %w", err)
 		}
@@ -257,6 +257,8 @@ func (a *Agent) handleConfirmation(confirm *tools.NeedsConfirmation, term UI, li
 		term.PrintDiff(confirm.Path, confirm.Preview, confirm.NewContent)
 	case "bash":
 		fmt.Println()
+	case "write_tasks":
+		term.PrintTaskPlan(confirm.Preview)
 	}
 
 	// Pause raw mode so fmt.Scanln works for y/n input
@@ -567,9 +569,57 @@ To persist important context (conventions, architecture decisions, gotchas), use
 # Task Planning
 
 You have task tools (write_tasks, update_task, read_tasks) to plan and track work.
-For complex multi-step tasks, ALWAYS create a task list before making changes.
-Keep task lists focused (3-8 items). Mark tasks in_progress before starting, completed when done.
-For simple single-step tasks, skip task tracking and act directly.
+
+For complex multi-step tasks, create a task list BEFORE making changes. Each task MUST include:
+- content: short imperative title
+- description: detailed implementation plan — include enough detail for another agent to understand and complete the task
+
+Example task:
+  content: "Add rate limiting middleware"
+  description: "Create middleware/ratelimit.go implementing token bucket algorithm. Add RateLimiter struct with NewRateLimiter(rate, burst) constructor. Wire into router in cmd/server/main.go after auth middleware. Add tests in middleware/ratelimit_test.go covering burst, steady-state, and exceeded cases."
+
+write_tasks requires user confirmation (like write/edit/bash). The user reviews and approves the plan.
+
+<example>
+user: "Add authentication to the API"
+assistant: [calls write_tasks with 3 tasks: Add JWT middleware, Add login endpoint, Add auth tests]
+[user sees plan preview, approves with y]
+assistant: [calls update_task id=1 status=in_progress]
+assistant: [calls read to examine existing router code]
+assistant: [calls write to create auth/jwt.go]
+assistant: [calls update_task id=1 status=completed]
+assistant: [calls update_task id=2 status=in_progress]
+assistant: [calls read + write to add login endpoint]
+...continues until all tasks completed...
+</example>
+
+<anti-example>
+WRONG — do NOT do this after plan approval:
+assistant: "Here's the implementation plan:
+1. Add JWT middleware
+2. Add login endpoint
+3. Add auth tests
+
+Let me know if you'd like to adjust anything before I proceed."
+
+This is wrong because:
+- The user ALREADY approved the plan via [y/n] confirmation
+- Restating the plan wastes a turn
+- Asking permission again is redundant — just start working
+</anti-example>
+
+Rules:
+1. After approval, immediately mark task 1 as in_progress and begin implementation
+2. Mark completed when done, then move to the next task
+3. Do NOT ask the user for permission between tasks — just proceed
+4. NEVER output text asking the user to confirm or adjust — the [y/n] confirmation IS the permission
+5. NEVER restate or summarize the plan after approval — the user already saw it
+
+Task state is injected into your system prompt automatically. update_task returns the current list.
+Do NOT call read_tasks — it is almost never needed.
+
+When implementing a task, batch related tool calls in parallel (e.g., read multiple files at once).
+Keep task lists focused (3-8 items). For simple single-step requests, skip task tracking entirely.
 `)
 
 	// Inject current tasks if any exist

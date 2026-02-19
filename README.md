@@ -72,7 +72,7 @@ User input
 
 **Session persistence & checkpoints** — Conversations auto-save to `.pilot/` as JSON. `/resume` reloads a previous session. Each turn creates a checkpoint with file snapshots, and `/rewind` can restore code, conversation, or both to any checkpoint.
 
-**Task-based planning** — Three tools (`write_tasks`, `update_task`, `read_tasks`) let the LLM plan multi-step work by creating and tracking a task list. Tasks are stored outside the message history, persist in sessions, and survive context compaction. The system prompt instructs the LLM to create tasks before complex work and skip them for simple requests. Callbacks are injected via `SetTaskCallbacks()` following the same pattern as `SetExploreFunc()`.
+**Task-based planning** — Three tools (`write_tasks`, `update_task`, `read_tasks`) let the LLM plan multi-step work. Each task includes a title and detailed implementation description. `write_tasks` requires user confirmation — the user reviews and approves the plan before work begins. Tasks are stored outside the message history, persist in sessions, and survive context compaction.
 
 ## Features
 
@@ -101,7 +101,7 @@ User input
 | `edit` | Replace exact string match in a file (requires confirmation) |
 | `bash` | Execute shell commands (requires confirmation, 30s timeout) |
 | `explore` | Spawn read-only sub-agent to research codebase |
-| `write_tasks` | Create/replace task list for planning multi-step work |
+| `write_tasks` | Create/replace task list for planning (requires confirmation) |
 | `update_task` | Update task status (pending → in_progress → completed) |
 | `read_tasks` | Read current task list |
 

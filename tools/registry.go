@@ -62,7 +62,7 @@ func (r *Registry) Execute(ctx context.Context, name string, input json.RawMessa
 // IsReadOnly returns true for tools that don't modify the filesystem.
 func (r *Registry) IsReadOnly(name string) bool {
 	switch name {
-	case "glob", "grep", "ls", "read", "explore", "write_tasks", "update_task", "read_tasks":
+	case "glob", "grep", "ls", "read", "explore", "update_task", "read_tasks":
 		return true
 	default:
 		return false
@@ -158,7 +158,13 @@ func (r *Registry) registerReadOnlyTools() {
 
 func (r *Registry) registerTaskTools() {
 	r.register("write_tasks",
-		`Create or replace the task list for planning multi-step work. Takes an array of tasks, each with a content string (imperative form, e.g. "Add auth middleware") and an optional active_form string (continuous form, e.g. "Adding auth middleware"). All tasks start as pending. Use this before starting complex work to plan your approach. Returns the formatted task list.`,
+		`Create or replace the task list for planning multi-step work. User confirmation required.
+Each task has:
+- content: short imperative title (e.g. "Add auth middleware")
+- description: detailed implementation plan with files to create/modify, code patterns to follow, and what "done" looks like
+- active_form: (optional) continuous form for status display
+
+After the user approves the plan, immediately mark task 1 as in_progress and begin implementation.`,
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {
@@ -169,14 +175,18 @@ func (r *Registry) registerTaskTools() {
 						"properties": {
 							"content": {
 								"type": "string",
-								"description": "Task description in imperative form (e.g. 'Add auth middleware')"
+								"description": "Short imperative title (e.g. 'Add auth middleware')"
+							},
+							"description": {
+								"type": "string",
+								"description": "Detailed description of what needs to be done. Include enough detail for another agent to understand and complete the task: specific files to create/modify, functions to change, code patterns to follow, and acceptance criteria."
 							},
 							"active_form": {
 								"type": "string",
 								"description": "Task description in continuous form (e.g. 'Adding auth middleware')"
 							}
 						},
-						"required": ["content"]
+						"required": ["content", "description"]
 					},
 					"description": "Array of tasks to create"
 				}
@@ -207,7 +217,7 @@ func (r *Registry) registerTaskTools() {
 	)
 
 	r.register("read_tasks",
-		`Read the current task list. Returns all tasks with their IDs, content, and status. Use this to check progress or remind yourself of the plan.`,
+		`Read the current task list. Task state is already in your system prompt at the start of each turn — you rarely need this tool. Only useful after many turns of work when context may have been compacted.`,
 		json.RawMessage(`{
 			"type": "object",
 			"properties": {}

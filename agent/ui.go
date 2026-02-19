@@ -21,6 +21,7 @@ type UI interface {
 	PrintSubAgentStatus(msg string)
 	PrintDiff(path, oldContent, newContent string)
 	PrintFilePreview(path, content string)
+	PrintTaskPlan(plan string)
 	ConfirmAction(prompt string) bool
 }
 

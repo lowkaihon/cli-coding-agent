@@ -10,12 +10,13 @@ import (
 
 // Task represents a tracked work item created by the LLM for planning.
 type Task struct {
-	ID         int       `json:"id"`
-	Content    string    `json:"content"`     // imperative: "Add auth middleware"
-	Status     string    `json:"status"`      // pending, in_progress, completed
-	ActiveForm string    `json:"active_form"` // continuous: "Adding auth middleware"
-	CreatedAt  time.Time `json:"created_at"`
-	UpdatedAt  time.Time `json:"updated_at"`
+	ID          int       `json:"id"`
+	Content     string    `json:"content"`     // imperative: "Add auth middleware"
+	Description string    `json:"description"` // detailed implementation steps
+	Status      string    `json:"status"`      // pending, in_progress, completed
+	ActiveForm  string    `json:"active_form"` // continuous: "Adding auth middleware"
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // WriteTasks replaces the entire task list with new tasks, auto-assigning IDs.
@@ -24,15 +25,16 @@ func (a *Agent) WriteTasks(inputs []tools.TaskInput) string {
 	a.tasks = make([]Task, len(inputs))
 	for i, in := range inputs {
 		a.tasks[i] = Task{
-			ID:         i + 1,
-			Content:    in.Content,
-			Status:     "pending",
-			ActiveForm: in.ActiveForm,
-			CreatedAt:  now,
-			UpdatedAt:  now,
+			ID:          i + 1,
+			Content:     in.Content,
+			Description: in.Description,
+			Status:      "pending",
+			ActiveForm:  in.ActiveForm,
+			CreatedAt:   now,
+			UpdatedAt:   now,
 		}
 	}
-	return a.TaskSummary()
+	return "User approved the plan. Mark task 1 as in_progress and begin implementation immediately.\n\n" + a.TaskSummary()
 }
 
 // UpdateTask changes the status of a single task by ID.
@@ -76,6 +78,13 @@ func (a *Agent) TaskSummary() string {
 		case "completed":
 			completed++
 			fmt.Fprintf(&sb, "  [x] %d. %s\n", t.ID, t.Content)
+		}
+		if t.Description != "" {
+			desc := t.Description
+			if len(desc) > 200 {
+				desc = desc[:197] + "..."
+			}
+			fmt.Fprintf(&sb, "        %s\n", desc)
 		}
 	}
 	fmt.Fprintf(&sb, "\n%d tasks (%d pending, %d in progress, %d completed)",

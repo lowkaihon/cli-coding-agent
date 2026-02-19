@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/signal"
@@ -172,7 +173,17 @@ func main() {
 
 			if err != nil {
 				if err == context.Canceled || runCtx.Err() != nil {
-					fmt.Println("Operation cancelled.")
+					if err != nil && err != context.Canceled && errors.Is(err, context.Canceled) {
+						// Wrapped cancellation with context (e.g., rate limit during retry)
+						reason := errors.Unwrap(err) // unwrap "cancelled: <inner>"
+						if reason != nil && reason != context.Canceled {
+							fmt.Printf("Operation cancelled (%s)\n", reason)
+						} else {
+							fmt.Println("Operation cancelled.")
+						}
+					} else {
+						fmt.Println("Operation cancelled.")
+					}
 					fmt.Println()
 				} else {
 					term.PrintError(err)
@@ -296,7 +307,7 @@ func handleModelSwitch(reader *bufio.Reader, term *ui.Terminal, ag *agent.Agent,
 		return
 	}
 
-	baseURL, maxTokens, contextWindow := config.ProviderDefaults(selectedProvider)
+	baseURL, maxTokens, contextWindow := config.ProviderDefaults(selectedProvider, selectedModel)
 	client := newClient(selectedProvider, apiKey, selectedModel, maxTokens, baseURL)
 	ag.SetClient(client, contextWindow)
 	*currentModel = selectedModel
@@ -438,10 +449,11 @@ func handleTasks(ag *agent.Agent, term *ui.Terminal) {
 	items := make([]ui.TaskListItem, len(tasks))
 	for i, t := range tasks {
 		items[i] = ui.TaskListItem{
-			ID:         t.ID,
-			Content:    t.Content,
-			Status:     t.Status,
-			ActiveForm: t.ActiveForm,
+			ID:          t.ID,
+			Content:     t.Content,
+			Description: t.Description,
+			Status:      t.Status,
+			ActiveForm:  t.ActiveForm,
 		}
 	}
 	term.PrintTaskList(items)

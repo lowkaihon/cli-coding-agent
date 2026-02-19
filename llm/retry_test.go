@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -119,6 +120,50 @@ func TestDoWithRetry_ContextCanceled(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("expected error, got nil")
+	}
+}
+
+func TestDoWithRetry_CancelledDuringRetryBackoff(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(429)
+		w.Write([]byte(`rate limited`))
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cfg := retryConfig{maxRetries: 5, baseDelay: 2 * time.Second, maxDelay: 10 * time.Second}
+
+	// Cancel after the first request completes and retry backoff begins
+	var calls atomic.Int32
+	_, err := doWithRetry(ctx, cfg, func() (*http.Response, error) {
+		if calls.Add(1) == 1 {
+			// Cancel during the backoff wait after first 429
+			go func() {
+				time.Sleep(50 * time.Millisecond)
+				cancel()
+			}()
+		}
+		return http.Get(server.URL)
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	// Should be a retryCancelledError with the 429 status preserved
+	var retryCancel *retryCancelledError
+	if !errors.As(err, &retryCancel) {
+		t.Fatalf("expected *retryCancelledError, got %T: %v", err, err)
+	}
+	if retryCancel.LastStatusCode != 429 {
+		t.Errorf("expected LastStatusCode=429, got %d", retryCancel.LastStatusCode)
+	}
+	if retryCancel.Attempt < 1 {
+		t.Errorf("expected Attempt >= 1, got %d", retryCancel.Attempt)
+	}
+
+	// errors.Is should still match context.Canceled via Unwrap
+	if !errors.Is(err, context.Canceled) {
+		t.Error("expected errors.Is(err, context.Canceled) to be true")
 	}
 }
 

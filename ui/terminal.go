@@ -481,10 +481,11 @@ func (t *Terminal) PrintConversationHistory(messages []llm.Message) {
 
 // TaskListItem represents a task entry for display.
 type TaskListItem struct {
-	ID         int
-	Content    string
-	Status     string
-	ActiveForm string
+	ID          int
+	Content     string
+	Description string
+	Status      string
+	ActiveForm  string
 }
 
 // PrintTaskList displays the current task list grouped by status.
@@ -506,11 +507,25 @@ func (t *Terminal) PrintTaskList(tasks []TaskListItem) {
 			marker = t.c(Cyan, "○ ")
 		}
 		fmt.Printf("  %s%s %s\n", marker, t.c(Gray, fmt.Sprintf("[%d]", task.ID)), task.Content)
+		if task.Description != "" {
+			desc := task.Description
+			if len(desc) > 200 {
+				desc = desc[:197] + "..."
+			}
+			fmt.Printf("       %s\n", t.c(Gray, desc))
+		}
 	}
 	fmt.Println()
 	fmt.Printf("  %d tasks (%d pending, %d in progress, %d completed)\n",
 		len(tasks), pending, inProgress, completed)
 	fmt.Println()
+}
+
+// PrintTaskPlan displays the proposed task plan before confirmation.
+func (t *Terminal) PrintTaskPlan(plan string) {
+	fmt.Println()
+	fmt.Println(t.c(Bold, "Proposed Task Plan"))
+	fmt.Println(plan)
 }
 
 // PrintRewindComplete prints a confirmation message after a rewind operation.

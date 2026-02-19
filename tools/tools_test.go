@@ -305,17 +305,98 @@ func TestBashToolNeedsConfirmation(t *testing.T) {
 	}
 }
 
+func TestWriteTasksNeedsConfirmation(t *testing.T) {
+	dir := t.TempDir()
+	r := NewRegistry(dir)
+
+	var writtenTasks []TaskInput
+	r.SetTaskCallbacks(TaskCallbacks{
+		WriteTasks: func(tasks []TaskInput) string {
+			writtenTasks = tasks
+			return "Tasks created"
+		},
+		UpdateTask: func(id int, status string) error { return nil },
+		ReadTasks:  func() string { return "No tasks." },
+	})
+
+	input, _ := json.Marshal(writeTasksInput{
+		Tasks: []TaskInput{
+			{Content: "Add auth", Description: "Create middleware in auth.go"},
+			{Content: "Add tests", Description: "Write tests for auth middleware"},
+		},
+	})
+	_, err := r.Execute(context.Background(), "write_tasks", input)
+	if err == nil {
+		t.Fatal("expected NeedsConfirmation error")
+	}
+
+	confirm, ok := err.(*NeedsConfirmation)
+	if !ok {
+		t.Fatalf("expected *NeedsConfirmation, got %T: %v", err, err)
+	}
+	if confirm.Tool != "write_tasks" {
+		t.Errorf("expected tool=write_tasks, got %s", confirm.Tool)
+	}
+	if !strings.Contains(confirm.Preview, "Add auth") {
+		t.Errorf("expected preview to contain task content, got: %s", confirm.Preview)
+	}
+	if !strings.Contains(confirm.Preview, "Create middleware") {
+		t.Errorf("expected preview to contain task description, got: %s", confirm.Preview)
+	}
+
+	// Execute the confirmation
+	result, err := confirm.Execute()
+	if err != nil {
+		t.Fatalf("execute failed: %v", err)
+	}
+	if result != "Tasks created" {
+		t.Errorf("unexpected result: %s", result)
+	}
+	if len(writtenTasks) != 2 {
+		t.Fatalf("expected 2 tasks written, got %d", len(writtenTasks))
+	}
+	if writtenTasks[0].Description != "Create middleware in auth.go" {
+		t.Errorf("expected description preserved, got: %s", writtenTasks[0].Description)
+	}
+}
+
+func TestWriteTasksRejectsEmptyDescription(t *testing.T) {
+	dir := t.TempDir()
+	r := NewRegistry(dir)
+	r.SetTaskCallbacks(TaskCallbacks{
+		WriteTasks: func(tasks []TaskInput) string { return "Tasks created" },
+		UpdateTask: func(id int, status string) error { return nil },
+		ReadTasks:  func() string { return "No tasks." },
+	})
+
+	input, _ := json.Marshal(writeTasksInput{
+		Tasks: []TaskInput{
+			{Content: "Add auth", Description: ""},
+		},
+	})
+	_, err := r.Execute(context.Background(), "write_tasks", input)
+	if err == nil {
+		t.Fatal("expected error for empty description")
+	}
+	if _, ok := err.(*NeedsConfirmation); ok {
+		t.Fatal("should not get NeedsConfirmation for empty description")
+	}
+	if !strings.Contains(err.Error(), "description is required") {
+		t.Errorf("expected 'description is required' in error, got: %v", err)
+	}
+}
+
 func TestIsReadOnly(t *testing.T) {
 	r := NewRegistry(t.TempDir())
 
-	readOnlyTools := []string{"glob", "grep", "ls", "read", "write_tasks", "update_task", "read_tasks"}
+	readOnlyTools := []string{"glob", "grep", "ls", "read", "update_task", "read_tasks"}
 	for _, name := range readOnlyTools {
 		if !r.IsReadOnly(name) {
 			t.Errorf("expected %s to be read-only", name)
 		}
 	}
 
-	writeTools := []string{"write", "edit", "bash"}
+	writeTools := []string{"write", "edit", "bash", "write_tasks"}
 	for _, name := range writeTools {
 		if r.IsReadOnly(name) {
 			t.Errorf("expected %s to NOT be read-only", name)

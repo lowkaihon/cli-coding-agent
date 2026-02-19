@@ -41,6 +41,28 @@ func (e *retryableError) Error() string {
 	return fmt.Sprintf("server error (HTTP %d) after %d retries: %s", e.StatusCode, e.Retries, e.Body)
 }
 
+// retryCancelledError is returned when context is cancelled during retry backoff,
+// preserving the last HTTP error that triggered the retry.
+type retryCancelledError struct {
+	LastStatusCode int
+	Attempt        int
+	Cause          error
+}
+
+func (e *retryCancelledError) Error() string {
+	if e.LastStatusCode == 429 {
+		return fmt.Sprintf("cancelled during retry (rate limited, attempt %d): %v", e.Attempt, e.Cause)
+	}
+	if e.LastStatusCode >= 500 {
+		return fmt.Sprintf("cancelled during retry (server error HTTP %d, attempt %d): %v", e.LastStatusCode, e.Attempt, e.Cause)
+	}
+	return fmt.Sprintf("cancelled during retry (attempt %d): %v", e.Attempt, e.Cause)
+}
+
+func (e *retryCancelledError) Unwrap() error {
+	return e.Cause
+}
+
 // doWithRetry executes an HTTP request function with exponential backoff retry
 // for 429 and 5xx errors. It respects the Retry-After header when present.
 // The doReq function receives the attempt number (0-based) and should return
@@ -48,6 +70,7 @@ func (e *retryableError) Error() string {
 // to process. On non-retryable errors (4xx except 429), it returns immediately.
 func doWithRetry(ctx context.Context, cfg retryConfig, doReq func() (*http.Response, error)) (*http.Response, error) {
 	var retryAfterOverride time.Duration // one-shot override from Retry-After header
+	var lastStatus int                   // last HTTP error status seen (for cancellation context)
 
 	for attempt := 0; attempt <= cfg.maxRetries; attempt++ {
 		if attempt > 0 {
@@ -58,6 +81,13 @@ func doWithRetry(ctx context.Context, cfg retryConfig, doReq func() (*http.Respo
 			retryAfterOverride = 0 // consume the override
 			select {
 			case <-ctx.Done():
+				if lastStatus > 0 {
+					return nil, &retryCancelledError{
+						LastStatusCode: lastStatus,
+						Attempt:        attempt,
+						Cause:          ctx.Err(),
+					}
+				}
 				return nil, ctx.Err()
 			case <-time.After(delay):
 			}
@@ -81,6 +111,7 @@ func doWithRetry(ctx context.Context, cfg retryConfig, doReq func() (*http.Respo
 			return nil, fmt.Errorf("authentication error (HTTP %d): %s", resp.StatusCode, string(body))
 
 		case resp.StatusCode == 429, resp.StatusCode >= 500:
+			lastStatus = resp.StatusCode
 			if ra := parseRetryAfter(resp); ra > 0 && ra < cfg.maxDelay {
 				retryAfterOverride = ra
 			}

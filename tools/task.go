@@ -4,12 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 // TaskInput is the per-task shape for write_tasks (no ID or timestamps).
 type TaskInput struct {
-	Content    string `json:"content"`
-	ActiveForm string `json:"active_form"`
+	Content     string `json:"content"`
+	Description string `json:"description"`
+	ActiveForm  string `json:"active_form"`
 }
 
 // TaskCallbacks breaks the circular dependency between tools and agent
@@ -41,11 +43,35 @@ func (r *Registry) writeTasksTool(_ context.Context, input json.RawMessage) (str
 		if t.Content == "" {
 			return "", fmt.Errorf("task %d: content is required", i+1)
 		}
+		if t.Description == "" {
+			return "", fmt.Errorf("task %d: description is required — include files to modify, implementation steps, and acceptance criteria", i+1)
+		}
 	}
 	if r.taskCallbacks.WriteTasks == nil {
 		return "", fmt.Errorf("task callbacks not configured")
 	}
-	return r.taskCallbacks.WriteTasks(params.Tasks), nil
+
+	preview := formatTaskPreview(params.Tasks)
+	return "", &NeedsConfirmation{
+		Tool:    "write_tasks",
+		Path:    "task plan",
+		Preview: preview,
+		Execute: func() (string, error) {
+			return r.taskCallbacks.WriteTasks(params.Tasks), nil
+		},
+	}
+}
+
+func formatTaskPreview(tasks []TaskInput) string {
+	var sb strings.Builder
+	for i, t := range tasks {
+		fmt.Fprintf(&sb, "  %d. %s\n", i+1, t.Content)
+		if t.Description != "" {
+			fmt.Fprintf(&sb, "     %s\n", t.Description)
+		}
+	}
+	fmt.Fprintf(&sb, "\n%d tasks", len(tasks))
+	return sb.String()
 }
 
 type updateTaskInput struct {
@@ -77,5 +103,6 @@ func (r *Registry) readTasksTool(_ context.Context, _ json.RawMessage) (string, 
 	if r.taskCallbacks.ReadTasks == nil {
 		return "", fmt.Errorf("task callbacks not configured")
 	}
-	return r.taskCallbacks.ReadTasks(), nil
+	result := r.taskCallbacks.ReadTasks()
+	return result + "\n\n(Note: task state is already in your system prompt. update_task also returns the current list. You rarely need read_tasks.)", nil
 }

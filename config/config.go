@@ -96,13 +96,28 @@ func KnownModels() []KnownModel {
 	}
 }
 
-// ProviderDefaults returns the base URL, max tokens, and context window for a provider.
-func ProviderDefaults(provider string) (baseURL string, maxTokens int, contextWindow int) {
+// ProviderDefaults returns the base URL, max tokens, and context window for a provider and model.
+func ProviderDefaults(provider, model string) (baseURL string, maxTokens int, contextWindow int) {
 	switch provider {
 	case "anthropic":
 		return "https://api.anthropic.com/v1", 16384, 200000
 	default:
-		return "https://api.openai.com/v1", 16384, 128000
+		return "https://api.openai.com/v1", 16384, openAIContextWindow(model)
+	}
+}
+
+// openAIContextWindow returns the context window size for an OpenAI model
+// based on its name prefix.
+func openAIContextWindow(model string) int {
+	switch {
+	case strings.HasPrefix(model, "gpt-5"):
+		return 400000
+	case strings.HasPrefix(model, "o3") || strings.HasPrefix(model, "o4"):
+		return 200000
+	case strings.HasPrefix(model, "gpt-3.5"):
+		return 16000
+	default:
+		return 128000
 	}
 }
 
