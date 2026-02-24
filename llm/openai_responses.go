@@ -12,7 +12,6 @@ import (
 )
 
 // OpenAIResponsesClient implements LLMClient for OpenAI's /v1/responses endpoint.
-// Used for GPT-5.x models that require the newer Responses API.
 type OpenAIResponsesClient struct {
 	apiKey    string
 	model     string

@@ -35,10 +35,7 @@ type retryableError struct {
 }
 
 func (e *retryableError) Error() string {
-	if e.StatusCode == 429 {
-		return fmt.Sprintf("rate limited (HTTP 429) after %d retries: %s", e.Retries, e.Body)
-	}
-	return fmt.Sprintf("server error (HTTP %d) after %d retries: %s", e.StatusCode, e.Retries, e.Body)
+	return fmt.Sprintf("request failed (HTTP %d) after %d retries: %s", e.StatusCode, e.Retries, e.Body)
 }
 
 // doWithRetry executes an HTTP request function with exponential backoff retry
@@ -71,6 +68,27 @@ func doWithRetry(ctx context.Context, cfg retryConfig, doReq func() (*http.Respo
 			return nil, fmt.Errorf("http request: %w", err)
 		}
 
+		// Respect server-side retry override before checking status codes.
+		if v := resp.Header.Get("x-should-retry"); v == "false" {
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			return nil, fmt.Errorf("API error (HTTP %d, retry disabled): %s", resp.StatusCode, string(body))
+		} else if v == "true" && resp.StatusCode >= 400 {
+			if ra := parseRetryAfter(resp); ra > 0 && ra < cfg.maxDelay {
+				retryAfterOverride = ra
+			}
+			body, _ := io.ReadAll(resp.Body)
+			resp.Body.Close()
+			if attempt < cfg.maxRetries {
+				continue
+			}
+			return nil, &retryableError{
+				StatusCode: resp.StatusCode,
+				Body:       string(body),
+				Retries:    cfg.maxRetries,
+			}
+		}
+
 		switch {
 		case resp.StatusCode >= 200 && resp.StatusCode < 300:
 			return resp, nil
@@ -80,7 +98,7 @@ func doWithRetry(ctx context.Context, cfg retryConfig, doReq func() (*http.Respo
 			resp.Body.Close()
 			return nil, fmt.Errorf("authentication error (HTTP %d): %s", resp.StatusCode, string(body))
 
-		case resp.StatusCode == 429, resp.StatusCode >= 500:
+		case resp.StatusCode == 408, resp.StatusCode == 409, resp.StatusCode == 429, resp.StatusCode >= 500:
 			if ra := parseRetryAfter(resp); ra > 0 && ra < cfg.maxDelay {
 				retryAfterOverride = ra
 			}
@@ -116,16 +134,24 @@ func backoffDelay(attempt int, baseDelay, maxDelay time.Duration) time.Duration 
 	return delay
 }
 
-// parseRetryAfter extracts the Retry-After header value as a duration.
-// Supports integer seconds format. Returns 0 if not present or unparseable.
+// parseRetryAfter extracts the retry delay from response headers.
+// Checks Retry-After-Ms (milliseconds) first, then Retry-After (integer seconds).
+// Returns 0 if neither header is present or parseable.
+//
 func parseRetryAfter(resp *http.Response) time.Duration {
-	val := resp.Header.Get("Retry-After")
-	if val == "" {
-		return 0
+	if val := resp.Header.Get("Retry-After-Ms"); val != "" {
+		ms, err := strconv.Atoi(val)
+		if err != nil {
+			return 0
+		}
+		return time.Duration(ms) * time.Millisecond
 	}
-	seconds, err := strconv.Atoi(val)
-	if err != nil {
-		return 0
+	if val := resp.Header.Get("Retry-After"); val != "" {
+		seconds, err := strconv.Atoi(val)
+		if err != nil {
+			return 0
+		}
+		return time.Duration(seconds) * time.Second
 	}
-	return time.Duration(seconds) * time.Second
+	return 0
 }
