@@ -241,25 +241,113 @@ func TestDoWithRetry_RetryAfterIsOneShot(t *testing.T) {
 	}
 }
 
+func TestDoWithRetry_408and409_Retries(t *testing.T) {
+	for _, code := range []int{408, 409} {
+		var calls atomic.Int32
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n := calls.Add(1)
+			if n <= 1 {
+				w.WriteHeader(code)
+				w.Write([]byte(`transient error`))
+				return
+			}
+			w.WriteHeader(200)
+			w.Write([]byte(`{"ok":true}`))
+		}))
+
+		cfg := retryConfig{maxRetries: 3, baseDelay: 10 * time.Millisecond, maxDelay: 50 * time.Millisecond}
+		resp, err := doWithRetry(context.Background(), cfg, func() (*http.Response, error) {
+			return http.Get(server.URL)
+		})
+		server.Close()
+		if err != nil {
+			t.Fatalf("HTTP %d: unexpected error: %v", code, err)
+		}
+		resp.Body.Close()
+		if calls.Load() != 2 {
+			t.Fatalf("HTTP %d: expected 2 attempts, got %d", code, calls.Load())
+		}
+	}
+}
+
+func TestDoWithRetry_XShouldRetryTrue(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n := calls.Add(1)
+		if n <= 1 {
+			w.Header().Set("x-should-retry", "true")
+			w.WriteHeader(400) // normally non-retryable
+			w.Write([]byte(`bad request`))
+			return
+		}
+		w.WriteHeader(200)
+		w.Write([]byte(`{"ok":true}`))
+	}))
+	defer server.Close()
+
+	cfg := retryConfig{maxRetries: 3, baseDelay: 10 * time.Millisecond, maxDelay: 50 * time.Millisecond}
+	resp, err := doWithRetry(context.Background(), cfg, func() (*http.Response, error) {
+		return http.Get(server.URL)
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	resp.Body.Close()
+	if calls.Load() != 2 {
+		t.Fatalf("expected 2 attempts (x-should-retry forced retry), got %d", calls.Load())
+	}
+}
+
+func TestDoWithRetry_XShouldRetryFalse(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		w.Header().Set("x-should-retry", "false")
+		w.WriteHeader(429) // normally retryable
+		w.Write([]byte(`rate limited`))
+	}))
+	defer server.Close()
+
+	cfg := retryConfig{maxRetries: 3, baseDelay: 10 * time.Millisecond, maxDelay: 50 * time.Millisecond}
+	_, err := doWithRetry(context.Background(), cfg, func() (*http.Response, error) {
+		return http.Get(server.URL)
+	})
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("expected 1 attempt (x-should-retry=false prevented retry), got %d", calls.Load())
+	}
+}
+
 func TestParseRetryAfter(t *testing.T) {
 	tests := []struct {
-		header string
-		want   time.Duration
+		name     string
+		headers  map[string]string
+		want     time.Duration
 	}{
-		{"", 0},
-		{"5", 5 * time.Second},
-		{"not-a-number", 0},
-		{"0", 0},
-		{"30", 30 * time.Second},
+		{"no headers", nil, 0},
+		{"Retry-After seconds", map[string]string{"Retry-After": "5"}, 5 * time.Second},
+		{"Retry-After invalid", map[string]string{"Retry-After": "not-a-number"}, 0},
+		{"Retry-After zero", map[string]string{"Retry-After": "0"}, 0},
+		{"Retry-After-Ms milliseconds", map[string]string{"Retry-After-Ms": "1500"}, 1500 * time.Millisecond},
+		{"Retry-After-Ms takes priority", map[string]string{
+			"Retry-After-Ms": "500",
+			"Retry-After":    "10",
+		}, 500 * time.Millisecond},
+		{"Retry-After-Ms invalid falls through", map[string]string{
+			"Retry-After-Ms": "bad",
+			"Retry-After":    "3",
+		}, 0},
 	}
 	for _, tt := range tests {
 		resp := &http.Response{Header: http.Header{}}
-		if tt.header != "" {
-			resp.Header.Set("Retry-After", tt.header)
+		for k, v := range tt.headers {
+			resp.Header.Set(k, v)
 		}
 		got := parseRetryAfter(resp)
 		if got != tt.want {
-			t.Errorf("parseRetryAfter(%q) = %v, want %v", tt.header, got, tt.want)
+			t.Errorf("%s: parseRetryAfter() = %v, want %v", tt.name, got, tt.want)
 		}
 	}
 }
