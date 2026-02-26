@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build darwin
 
 package ui
 
@@ -12,11 +12,12 @@ import (
 func StdinHasData() bool {
 	fd := int(os.Stdin.Fd())
 	var readFds syscall.FdSet
-	readFds.Bits[fd/64] |= 1 << (uint(fd) % 64)
-	tv := syscall.Timeval{} // zero timeout = non-blocking poll
-	n, err := syscall.Select(fd+1, &readFds, nil, nil, &tv)
+	readFds.Bits[fd/32] |= 1 << (uint(fd) % 32)
+	tv := syscall.Timeval{}
+	err := syscall.Select(fd+1, &readFds, nil, nil, &tv)
 	if err != nil {
 		return false
 	}
-	return n > 0
+	// On Darwin, Select returns only an error. Check if the fd bit is still set.
+	return readFds.Bits[fd/32]&(1<<(uint(fd)%32)) != 0
 }

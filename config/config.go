@@ -50,7 +50,7 @@ func Load(provider string) (*Config, error) {
 		cfg = &Config{
 			Provider:      "anthropic",
 			APIKey:        apiKey,
-			Model:         "claude-sonnet-4-5-20250929",
+			Model:         "claude-sonnet-4-6",
 			MaxTokens:     16384,
 			BaseURL:       "https://api.anthropic.com/v1",
 			ContextWindow: 200000,
@@ -91,7 +91,7 @@ func KnownModels() []KnownModel {
 		{"openai", "gpt-5.1-codex-mini", "GPT-5.1 Codex Mini (OpenAI)"},
 		{"openai", "gpt-5.2-codex", "GPT-5.2 Codex (OpenAI)"},
 		{"anthropic", "claude-opus-4-6", "Claude Opus 4.6 (Anthropic)"},
-		{"anthropic", "claude-sonnet-4-5-20250929", "Claude Sonnet 4.5 (Anthropic)"},
+		{"anthropic", "claude-sonnet-4-6", "Claude Sonnet 4.6 (Anthropic)"},
 		{"anthropic", "claude-haiku-4-5-20251001", "Claude Haiku 4.5 (Anthropic)"},
 	}
 }
